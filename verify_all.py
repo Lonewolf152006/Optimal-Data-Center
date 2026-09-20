@@ -249,6 +249,8 @@ def test_artifacts_integrity():
         os.path.join(REPO_ROOT, "results", "causal_bias_test_results.csv"),
         os.path.join(REPO_ROOT, "docs", "METHODOLOGY.md"),
         os.path.join(REPO_ROOT, "docs", "MATHWORKS_SUBMISSION_ANSWERS.md"),
+        os.path.join(REPO_ROOT, "LICENSE"),
+        os.path.join(REPO_ROOT, "data", "sample", "sample_thermal_data.csv"),
     ]
     
     for f in expected_files:

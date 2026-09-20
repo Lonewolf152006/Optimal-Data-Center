@@ -116,6 +116,13 @@ graph TD
 
 ### Option B: MATLAB & Simulink / Simscape Fluids Integration
 
+#### Required Toolboxes & Add-ons:
+- **MATLAB** (R2022a or later recommended)
+- **Simulink** (dynamic system simulation & signal logging)
+- **Simscape & Simscape Fluids** (for two-loop hydraulic/liquid cooling companion modeling)
+- **Optimization Toolbox** (for convex quadratic programming and receding-horizon solvers)
+
+#### Execution Steps:
 1. **Open MATLAB** in this repository's root directory.
 2. **Generate or export the Simulink model**:
    - To build the standard companion Simulink model:
@@ -126,11 +133,27 @@ graph TD
      ```matlab
      export_simscape_fluids_model
      ```
-3. **Run automated simulation and scenario generation**:
+3. **Run automated simulation and scenario generation (One-Click)**:
    ```matlab
    results = run_simulation('DataCenterCooling', 1);
    ```
-   This generates `thermal_dataset.csv` with all logged server temperatures, coolant temperatures, flow rates, and cooling power signals.
+   This generates `data/thermal_dataset.csv` with all logged server temperatures, coolant temperatures, flow rates, and cooling power signals.
+4. **Run MATLAB Unit Tests**:
+   ```matlab
+   results = runtests('tests/test_datacenter_simulation')
+   ```
+
+---
+
+## Testing & Verification
+
+| Framework | Test Command | Verification Scope | Expected Duration |
+|---|---|---|:---:|
+| **Master Health Audit** | `python verify_all.py` | 8/8 subsystems (ODE plant, GRU, QML VQC, MPC, Arrhenius, QP) | ~13 sec |
+| **Python Unit Tests** | `python -m unittest discover tests` | 10 unit tests across physical ODEs, predictors, and solvers | ~0.35 sec |
+| **MATLAB Unit Tests** | `runtests('tests/test_datacenter_simulation')` | Plant balance, thermostat logic, environment & workload generators | ~2 sec |
+
+A lightweight 24-hour sample dataset is provided at [`data/sample/sample_thermal_data.csv`](data/sample/sample_thermal_data.csv) for immediate, offline testing without downloading external data.
 
 ---
 
@@ -138,15 +161,24 @@ graph TD
 
 | Requirement | Description | Status | Implementation Details |
 |---|---|:---:|---|
-| **1. Literature Review** | Thermal management standards and architectures | ✅ Complete | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) |
-| **2. Dynamic Plant Model** | Variable load, weather, chiller COP, fan curves | ✅ Complete | `simulate.py`, `models/DataCenterCooling.slx` |
+| **1. Literature Review** | Thermal management standards and architectures | ✅ Complete | [docs/METHODOLOGY.md](docs/METHODOLOGY.md) (Ebrahimi 2014, Mousavi 2015, Tang 2008) |
+| **2. Dynamic Plant Model** | Variable load, weather, chiller COP, fan curves | ✅ Complete | `simulate.py`, `models/DataCenterCooling.slx`, Simscape Fluids |
 | **3. Baseline Controller** | Thermostatic hysteresis control (22 °C) | ✅ Complete | Implemented and benchmarked in both Python & MATLAB |
 | **4. Predictive Controller** | MPC with machine learning surrogates | ✅ Complete | Receding horizon MPC with GRU & PennyLane QML |
-| **5. Carbon & Compliance** | Energy, carbon, and ASHRAE TC 9.9 bounds | ✅ Complete | 16.6% carbon cut, 99.99% compliance over 10 seeds |
-| **6. Component Failure** | Reliability & MTBF modeling (Advanced Scope 1) | ✅ Complete | `python/reliability/component_failure.py` |
-| **7. Workload Placement** | Optimal dispatch across racks (Advanced Scope 2) | ✅ Complete | `python/controllers/spatial_workload_dispatcher.py` |
+| **5. Carbon & Compliance** | Energy, carbon, and ASHRAE TC 9.9 bounds | ✅ Complete | 16.6% carbon cut, 99.99% compliance, PUE 1.238 → 1.198 |
+| **6. Component Failure** | Reliability & MTBF modeling (Advanced Scope 1) | ✅ Complete | `python/reliability/component_failure.py` (JEDEC Arrhenius & Coffin-Manson) |
+| **7. Workload Placement** | Optimal dispatch across racks (Advanced Scope 2) | ✅ Complete | `python/controllers/spatial_workload_dispatcher.py` (Convex QP) |
+
+---
+
+## Author & Contact Information
+
+- **Author**: Lonewolf152006 (Vedant)
+- **Email**: vedant15.nikumbh@gmail.com
+- **Repository**: [https://github.com/Lonewolf152006/Optimal-Data-Center](https://github.com/Lonewolf152006/Optimal-Data-Center)
+- **Challenge**: [MathWorks Excellence in Innovation — Project #196](https://github.com/mathworks/MATLAB-Simulink-Challenge-Project-Hub/discussions/27)
 
 ---
 
 ## License & Citation
-Developed for the **MathWorks Excellence in Innovation Challenge 2026**. Available under the MIT License.
+Developed for the **MathWorks Excellence in Innovation Challenge 2026**. Available as open source under the [MIT License](LICENSE).
