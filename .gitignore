@@ -1,0 +1,41 @@
+# ==============================================================================
+# Optimal Data Center Cooling: .gitignore (Python + MATLAB / Simulink)
+# ==============================================================================
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.env
+.venv
+env/
+venv/
+
+# MATLAB / Simulink temporary and compilation files
+*.asv
+*.autosave
+*.m~
+*.slxc
+slprj/
+sfprj/
+*.mex*
+*.mat.backup
+SFLog/
+codegen/
+*.log
+
+# OS & Editor specific files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
