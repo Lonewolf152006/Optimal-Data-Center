@@ -16,7 +16,7 @@ Optimal Data Center Cooling: Predictive and Quantum-Enhanced Thermal Management 
 
 ### Field 2: Repository URL
 ```text
-<INSERT_YOUR_PUBLIC_GITHUB_REPO_URL_HERE>
+https://github.com/Lonewolf152006/Optimal-Data-Center
 ```
 
 ---
