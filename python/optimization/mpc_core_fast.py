@@ -49,8 +49,9 @@ def make_mpc_controller_fast(predictor_fn=None, horizon=24):
         for k in range(h):
             if ml_traj is not None:
                 pred_step = ml_traj[k] - (t0 if k == 0 else ml_traj[k - 1])
-                dT_cool = (u_seq[k] - U_BASELINE) * plant.Q_COOL_MAX * plant.DT_HR / plant.C_ROOM
-                Ts[k + 1] = Ts[k] + pred_step - dT_cool
+                dT_cool = (u_seq[k] * plant.Q_COOL_MAX * plant.DT_HR) / plant.C_ROOM
+                dT_nominal = (U_BASELINE * plant.Q_COOL_MAX * plant.DT_HR) / plant.C_ROOM
+                Ts[k + 1] = Ts[k] + pred_step - (dT_cool - dT_nominal)
             else:
                 qit = plant.Q_IDLE + (plant.Q_IT_MAX - plant.Q_IDLE) * util_fore[k]
                 q_del = u_seq[k] * plant.Q_COOL_MAX

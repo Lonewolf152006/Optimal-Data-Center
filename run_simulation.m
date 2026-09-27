@@ -1,5 +1,5 @@
 function results = run_simulation(modelName, nRuns, opts)
-% RUN_SIMULATION  Drive the Data Center Cooling Simscape/Simulink model with
+% RUN_SIMULATION  Drive the Data Center Cooling Simulink model with
 % generated workload + environment scenarios, run it, and log the
 % signals needed to build the ML/QML training dataset.
 %
@@ -11,19 +11,16 @@ function results = run_simulation(modelName, nRuns, opts)
 %   "Optimal Data Center Cooling"
 
     % Ensure this script's directory and models/ directory are on MATLAB path
-    try
-        scriptPath = mfilename('fullpath');
-        if ~isempty(scriptPath)
-            scriptDir = fileparts(scriptPath);
-            if ~isempty(scriptDir) && exist(scriptDir, 'dir')
-                addpath(scriptDir);
-                modelsSubDir = fullfile(scriptDir, 'models');
-                if exist(modelsSubDir, 'dir')
-                    addpath(modelsSubDir);
-                end
+    scriptPath = mfilename('fullpath');
+    if ~isempty(scriptPath)
+        scriptDir = fileparts(scriptPath);
+        if ~isempty(scriptDir) && exist(scriptDir, 'dir')
+            addpath(scriptDir);
+            modelsSubDir = fullfile(scriptDir, 'models');
+            if exist(modelsSubDir, 'dir')
+                addpath(modelsSubDir);
             end
         end
-    catch
     end
 
     if nargin < 1 || isempty(modelName), modelName = 'DataCenterCooling'; end
@@ -35,7 +32,7 @@ function results = run_simulation(modelName, nRuns, opts)
     stopTimeSec = nDays * 24 * 3600;
 
     % Locate model file if path or name provided
-    [mDir, mBase, mExt] = fileparts(modelName);
+    [~, mBase, mExt] = fileparts(modelName);
     if isempty(mExt)
         if exist(fullfile(pwd, [mBase '.slx']), 'file')
             modelPath = fullfile(pwd, [mBase '.slx']);
@@ -54,10 +51,13 @@ function results = run_simulation(modelName, nRuns, opts)
                   (license('test', 'Simulink') == 1);
 
     if hasSimulink
-        % Auto-build model if it does not exist yet
+        % Model MUST exist — no auto-build, no fallback
         if ~exist(modelPath, 'file') && ~bdIsLoaded(pureModelName)
-            fprintf('Model "%s" not found. Auto-generating standard model via build_datacenter_simulink_model...\n', modelPath);
-            build_datacenter_simulink_model(modelPath);
+            error('run_simulation:modelNotFound', ...
+                ['Simulink model not found: %s\n' ...
+                 'The model must be version-controlled under models/.\n' ...
+                 'Run setup_simulink_model.m to create it from the official example.'], ...
+                modelPath);
         end
 
         % Load system
@@ -76,8 +76,11 @@ function results = run_simulation(modelName, nRuns, opts)
     allRows = table();
 
     for run = 1:nRuns
-        heatWaveDays = randsample(1:nDays, randi([0 2]));
-        spikeDays    = randsample(1:nDays, randi([0 2]));
+        % Guard against nDays < 2: limit sample count to available days
+        nHeatWave = min(randi([0 2]), nDays);
+        nSpike    = min(randi([0 2]), nDays);
+        heatWaveDays = sort(randperm(nDays, nHeatWave));
+        spikeDays    = sort(randperm(nDays, nSpike));
 
         ambientTempTS = generate_environment(nDays, dtMinutes, heatWaveDays, 1000 + run);
         serverLoadTS  = generate_workload(nDays, dtMinutes, spikeDays, [13 15], 2000 + run);
@@ -97,27 +100,12 @@ function results = run_simulation(modelName, nRuns, opts)
         assignin('base', 'relHumidityTS', relHumidityTS);
 
         % 3) Environment as 1x2 timeseries array [AmbientTemp, RelHumidity]
-        %    environment(:,1) -> AmbientTemp timeseries
-        %    environment(:,2) -> RelHumidity timeseries
-        try
-            assignin('base', 'environment', [ambientTempTS, relHumidityTS]);
-        catch
-            env_st(1).time = ambientTempTS.Time;
-            env_st(1).signals.values = ambientTempTS.Data;
-            env_st(1).signals.dimensions = 1;
-            env_st(2).time = ambientTempTS.Time;
-            env_st(2).signals.values = rel_hum_data;
-            env_st(2).signals.dimensions = 1;
-            assignin('base', 'environment', env_st);
-        end
+        assignin('base', 'environment', [ambientTempTS, relHumidityTS]);
 
         if hasSimulink
-            % Point Cooling Tower blocks directly to named timeseries to avoid slicing
-            try
-                set_param([pureModelName '/Cooling Tower/Temperature'], 'VariableName', 'ambientTempTS');
-                set_param([pureModelName '/Cooling Tower/Relative Humidity'], 'VariableName', 'relHumidityTS');
-            catch
-            end
+            % Point Cooling Tower blocks directly to named timeseries
+            set_param([pureModelName '/Cooling Tower/Temperature'], 'VariableName', 'ambientTempTS');
+            set_param([pureModelName '/Cooling Tower/Relative Humidity'], 'VariableName', 'relHumidityTS');
 
             % Execute Simulink simulation
             simOut = sim(pureModelName, 'ReturnWorkspaceOutputs', 'on');
@@ -131,13 +119,9 @@ function results = run_simulation(modelName, nRuns, opts)
                 t_vec = (0:dtMinutes*60:stopTimeSec)';
             end
 
-            % Extract logged signals with multi-pattern fallback
-            Tserver   = extractSignal(simOut, {'Server_Temp', 'ServerTemp', 'T_room'}, t_vec, 22.0, pureModelName);
-            Tcoolant  = extractSignal(simOut, {'Coolant_Temp', 'CoolantTemp', 'T_coolant'}, t_vec, 17.0, pureModelName);
-            flowRate  = extractSignal(simOut, {'Flow_Rate', 'FlowRate', 'm_dot'}, t_vec, 15.0, pureModelName);
-            pumpPower = extractSignal(simOut, {'Pump_Power', 'PumpPower', 'P_fan'}, t_vec, 5.0, pureModelName);
-            chillerPw = extractSignal(simOut, {'Chiller_Power', 'ChillerPower', 'P_chiller'}, t_vec, 45.0, pureModelName);
-            totalPw   = extractSignal(simOut, {'Total_Cooling_Power', 'TotalCoolingPower', 'P_cool'}, t_vec, 50.0, pureModelName);
+            % Extract logged signals — NO FALLBACKS, errors on missing signals
+            [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
+                extractLoggedSignals(simOut, t_vec);
         else
             % Pure MATLAB ODE numerical integration fallback
             t_vec = (0:dtMinutes*60:stopTimeSec)';
@@ -161,156 +145,103 @@ function results = run_simulation(modelName, nRuns, opts)
             run, nRuns, mat2str(heatWaveDays), mat2str(spikeDays));
     end
 
-    outFile = 'thermal_dataset.csv';
+    % Write to data/ directory as documented in README
+    outDir = fullfile(fileparts(mfilename('fullpath')), 'data');
+    if ~exist(outDir, 'dir'), mkdir(outDir); end
+    outFile = fullfile(outDir, 'thermal_dataset.csv');
     writetable(allRows, outFile);
     fprintf('Saved simulation dataset (%d rows) to %s\n', height(allRows), outFile);
     results = allRows;
 end
 
 % -------------------------------------------------------------------------
-% Helper: Robust Signal Extractor
+% Signal Extraction — Direct logsout access, NO silent fallbacks
 % -------------------------------------------------------------------------
-function data = extractSignal(simOut, candidates, timeVec, fallbackVal, modelName)
-    data = [];
-    n = numel(timeVec);
+function [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
+    extractLoggedSignals(simOut, timeVec)
+% EXTRACTLOGGEDSIGNALS  Read all six plant signals from Simulink logsout.
+% Errors loudly if any signal is missing — never returns placeholder data.
 
-    % Try logsout (Simulink.SimulationData.Dataset)
-    try
+    signalNames = {'Server_Temp', 'Coolant_Temp', 'Flow_Rate', ...
+                   'Pump_Power', 'Chiller_Power', 'Total_Cooling_Power'};
+
+    % Get logsout dataset
+    if isprop(simOut, 'logsout') && ~isempty(simOut.logsout)
+        logsout = simOut.logsout;
+    else
         logsout = simOut.get('logsout');
-        if ~isempty(logsout)
-            for i = 1:numel(candidates)
-                sig = logsout.get(candidates{i});
-                if ~isempty(sig)
-                    if isprop(sig, 'Values') && ~isempty(sig.Values)
-                        sigVal = sig.Values;
-                    else
-                        sigVal = sig;
-                    end
-                    if isa(sigVal, 'timeseries')
-                        resampled = resample(sigVal, timeVec);
-                        data = resampled.Data;
-                        data = data(:);
-                        return;
-                    elseif isa(sigVal, 'timetable')
-                        ts = timetable2timeseries(sigVal);
-                        resampled = resample(ts, timeVec);
-                        data = resampled.Data;
-                        data = data(:);
-                        return;
-                    end
-                end
-            end
-        end
-    catch
     end
 
-    % Try yout (Dataset, Struct with time, Struct array, or Timeseries)
-    try
-        yout = simOut.get('yout');
-        if ~isempty(yout)
-            if isa(yout, 'Simulink.SimulationData.Dataset')
-                for i = 1:numel(candidates)
-                    sig = yout.get(candidates{i});
-                    if ~isempty(sig)
-                        if isprop(sig, 'Values') && ~isempty(sig.Values)
-                            val = sig.Values;
-                        else
-                            val = sig;
-                        end
-                        if isa(val, 'timeseries')
-                            resampled = resample(val, timeVec);
-                            data = resampled.Data;
-                            data = data(:);
-                            return;
-                        elseif isa(val, 'timetable')
-                            ts = timetable2timeseries(val);
-                            resampled = resample(ts, timeVec);
-                            data = resampled.Data;
-                            data = data(:);
-                            return;
-                        end
-                    end
-                end
-            elseif isstruct(yout) || isobject(yout)
-                for i = 1:numel(candidates)
-                    cand = candidates{i};
-                    if (isstruct(yout) && isfield(yout, cand)) || (isobject(yout) && isprop(yout, cand))
-                        sig = yout.(cand);
-                        if isa(sig, 'timeseries')
-                            resampled = resample(sig, timeVec);
-                            data = resampled.Data;
-                            data = data(:);
-                            return;
-                        end
-                    end
-                end
-                % Also check yout.signals struct array (classic StructWithTime)
-                if isfield(yout, 'signals') && isstruct(yout.signals)
-                    for s = 1:numel(yout.signals)
-                        sName = yout.signals(s).label;
-                        if ismember(sName, candidates) && isfield(yout.signals(s), 'values')
-                            sVals = yout.signals(s).values;
-                            if isfield(yout, 'time') && ~isempty(yout.time)
-                                ts = timeseries(sVals, yout.time);
-                                resampled = resample(ts, timeVec);
-                                data = resampled.Data;
-                            else
-                                data = sVals;
-                            end
-                            data = data(:);
-                            return;
-                        end
-                    end
-                end
-            elseif isa(yout, 'timeseries')
-                resampled = resample(yout, timeVec);
-                data = resampled.Data;
-                data = data(:);
-                return;
-            end
-        end
-    catch
+    if isempty(logsout)
+        error('run_simulation:noLogsout', ...
+            ['No signal logging data found in simulation output.\n' ...
+             'Ensure the model has SignalLogging enabled and signals are ' ...
+             'connected to logged outports.']);
     end
 
-    % Try Simscape simlog in simOut or base workspace
-    try
-        simlogName = ['simlog_' modelName];
-        slog = [];
-        if isprop(simOut, simlogName)
-            slog = simOut.(simlogName);
-        elseif isprop(simOut, 'simlog')
-            slog = simOut.simlog;
-        elseif evalin('base', ['exist(''' simlogName ''', ''var'')'])
-            slog = evalin('base', simlogName);
+    results = cell(1, numel(signalNames));
+    for i = 1:numel(signalNames)
+        sig = logsout.get(signalNames{i});
+        if isempty(sig)
+            error('run_simulation:missingSignal', ...
+                'Signal "%s" not found in logsout. Available signals: %s', ...
+                signalNames{i}, strjoin(logsout.getElementNames(), ', '));
         end
-        if ~isempty(slog)
-            % Simscape logging found
-            data = repmat(fallbackVal, n, 1);
-            return;
+
+        % Extract timeseries data
+        if isprop(sig, 'Values') && ~isempty(sig.Values)
+            sigVal = sig.Values;
+        else
+            sigVal = sig;
         end
-    catch
+
+        if isa(sigVal, 'timeseries')
+            resampled = resample(sigVal, timeVec);
+            results{i} = resampled.Data(:);
+        elseif isa(sigVal, 'timetable')
+            ts = timetable2timeseries(sigVal);
+            resampled = resample(ts, timeVec);
+            results{i} = resampled.Data(:);
+        else
+            error('run_simulation:unknownSignalType', ...
+                'Signal "%s" has unexpected type "%s". Expected timeseries or timetable.', ...
+                signalNames{i}, class(sigVal));
+        end
     end
 
-    % Fallback if signal was not explicitly routed
-    if isempty(data) || numel(data) ~= n
-        data = repmat(fallbackVal, n, 1);
-    end
+    Tserver   = results{1};
+    Tcoolant  = results{2};
+    flowRate  = results{3};
+    pumpPower = results{4};
+    chillerPw = results{5};
+    totalPw   = results{6};
 end
 
 % -------------------------------------------------------------------------
-% Helper: Pure MATLAB Plant Integration (Fallback)
+% Pure MATLAB Plant Integration (Fallback when Simulink unavailable)
 % -------------------------------------------------------------------------
 function [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
     simulate_plant_matlab(ambientTempTS, serverLoadTS, t_vec)
+% SIMULATE_PLANT_MATLAB  Forward-integrate the lumped-parameter thermal
+% plant using RK4, matching the Python ThermalPlant.rk4_step exactly.
+% Baseline controller uses stateful hysteresis matching Python's
+% BaselineThermostat (setpoint=22, deadband=1, on=1.0, off=0.25).
 
     n = numel(t_vec);
     dt_sec = 300; % 5 min
     dt_hr  = dt_sec / 3600;
 
-    C_ROOM = 50.0; % kWh/C
-    UA_ENV = 4.0;  % kW/C
-    Q_IDLE = 150.0; Q_IT_MAX = 500.0; FAN_PEN_MAX = 30.0;
-    Q_COOL_MAX = 600.0; P_FAN_MAX = 40.0;
+    % Plant parameters (match Python ThermalPlant class attributes exactly)
+    C_ROOM = 50.0;   % kWh/°C
+    UA_ENV = 4.0;    % kW/°C
+    Q_IDLE = 150.0;  Q_IT_MAX = 500.0;  FAN_PEN_MAX = 30.0;
+    Q_COOL_MAX = 600.0;  P_FAN_MAX = 40.0;
+    FAN_RAMP_START = 25.0;  FAN_RAMP_FULL = 32.0;
+    COP_CAP = 8.5;  COP_FLOOR = 2.5;  COP_SLOPE = 0.15;  COP_REF_T = 10.0;
+
+    % Baseline controller parameters (match Python BaselineThermostat exactly)
+    T_SET = 22.0;  DEADBAND = 1.0;
+    ON_POWER = 1.0;  OFF_POWER = 0.25;
 
     Tserver   = zeros(n, 1);
     Tcoolant  = zeros(n, 1);
@@ -320,6 +251,7 @@ function [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
     totalPw   = zeros(n, 1);
 
     currT = 22.0;
+    ctrlMode = 'on';  % stateful hysteresis mode
 
     ambData  = resample(ambientTempTS, t_vec).Data;
     loadData = resample(serverLoadTS, t_vec).Data;
@@ -328,28 +260,41 @@ function [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
         Tamb  = ambData(i);
         u_ut  = loadData(i);
 
-        % Baseline hysteresis controller (22 C setpoint)
-        if currT > 22.5
-            u_ctrl = 0.65;
-        elseif currT < 21.5
-            u_ctrl = 0.25;
+        % Stateful hysteresis controller (matches Python BaselineThermostat)
+        if currT >= T_SET + DEADBAND
+            ctrlMode = 'on';
+        elseif currT <= T_SET - DEADBAND
+            ctrlMode = 'off';
+        end
+        % else: hold previous mode (true hysteresis)
+
+        if strcmp(ctrlMode, 'on')
+            u_ctrl = ON_POWER;
         else
-            u_ctrl = 0.45;
+            u_ctrl = OFF_POWER;
         end
 
-        % Plant ODE physics
-        ramp = min(max((currT - 25.0) / 7.0, 0), 1);
+        % Physics helper: IT heat load with fan ramp penalty
+        ramp = min(max((currT - FAN_RAMP_START) / (FAN_RAMP_FULL - FAN_RAMP_START), 0), 1);
         Qit  = Q_IDLE + (Q_IT_MAX - Q_IDLE)*u_ut + FAN_PEN_MAX * (ramp^2);
-        COP  = min(max(8.5 - 0.15*(Tamb - 10.0), 2.5), 8.5);
 
+        % COP curve
+        COP = min(max(COP_CAP - COP_SLOPE*(Tamb - COP_REF_T), COP_FLOOR), COP_CAP);
+
+        % Cooling
         Qdel   = u_ctrl * Q_COOL_MAX;
         Pfan   = P_FAN_MAX * (u_ctrl^3);
         Pchil  = Qdel / COP;
         Ptot   = Pfan + Pchil;
 
-        % Euler / RK1 step
-        dTdt = (Qit - Qdel + UA_ENV * (Tamb - currT)) / C_ROOM; % degC / hr
-        currT = currT + dTdt * dt_hr;
+        % RK4 integration step (matches Python ThermalPlant.rk4_step)
+        dTdt_fn = @(T) (q_it_fn(T, u_ut, Q_IDLE, Q_IT_MAX, FAN_PEN_MAX, FAN_RAMP_START, FAN_RAMP_FULL) ...
+                        - Qdel + UA_ENV * (Tamb - T)) / C_ROOM;
+        k1 = dTdt_fn(currT);
+        k2 = dTdt_fn(currT + dt_hr/2 * k1);
+        k3 = dTdt_fn(currT + dt_hr/2 * k2);
+        k4 = dTdt_fn(currT + dt_hr * k3);
+        currT = currT + dt_hr/6 * (k1 + 2*k2 + 2*k3 + k4);
 
         Tserver(i)   = currT;
         Tcoolant(i)  = currT - 5.0;
@@ -360,72 +305,20 @@ function [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
     end
 end
 
-% -------------------------------------------------------------------------
-% Embedded Subfunction: generate_environment
-% -------------------------------------------------------------------------
-function ambientTempTS = generate_environment(nDays, dtMinutes, heatWaveDays, seed)
-    if nargin < 4, seed = 1; end
-    rng(seed);
-
-    dtHr = dtMinutes/60;
-    t = (0:dtHr:nDays*24-dtHr)';
-    hourOfDay = mod(t, 24);
-
-    % Diurnal sinusoid: trough ~05:00, peak ~15:00
-    Tamb = 24.0 + 6.5*sin(2*pi*(hourOfDay - 9)/24 - pi/2);
-
-    % Small stochastic noise
-    Tamb = Tamb + 0.5*randn(size(Tamb));
-
-    if ~isempty(heatWaveDays)
-        dayIdx = floor(t/24) + 1;
-        isHeatWave = ismember(dayIdx, heatWaveDays);
-        Tamb = Tamb + 8.0*isHeatWave;
-    end
-
-    ambientTempTS = timeseries(Tamb, t*3600, 'Name', 'AmbientTemp');
-    ambientTempTS.DataInfo.Units = 'degC';
+% Helper for RK4: IT heat load as a function of temperature
+function Qit = q_it_fn(T, u_ut, Q_IDLE, Q_IT_MAX, FAN_PEN_MAX, FAN_RAMP_START, FAN_RAMP_FULL)
+    ramp = min(max((T - FAN_RAMP_START) / (FAN_RAMP_FULL - FAN_RAMP_START), 0), 1);
+    Qit = Q_IDLE + (Q_IT_MAX - Q_IDLE)*u_ut + FAN_PEN_MAX * (ramp^2);
 end
 
 % -------------------------------------------------------------------------
-% Embedded Subfunction: generate_workload
-% -------------------------------------------------------------------------
-function serverLoadTS = generate_workload(nDays, dtMinutes, spikeDays, spikeWindowHr, seed)
-    if nargin < 5, seed = 1; end
-    rng(seed);
-
-    dtHr = dtMinutes/60;
-    t = (0:dtHr:nDays*24-dtHr)';
-    hourOfDay = mod(t, 24);
-
-    util = 0.55 + 0.20*sin(2*pi*(hourOfDay - 9)/24 - pi/2);
-    util = util + 0.03*randn(size(util));
-    util = min(max(util, 0.30), 0.80);
-
-    if ~isempty(spikeDays)
-        dayIdx = floor(t/24) + 1;
-        inSpikeDay = ismember(dayIdx, spikeDays);
-        inSpikeWindow = hourOfDay >= spikeWindowHr(1) & hourOfDay < spikeWindowHr(2);
-        mask = inSpikeDay & inSpikeWindow;
-        util(mask) = 0.95 + 0.02*randn(sum(mask), 1);
-    end
-    util = min(max(util, 0), 1);
-
-    serverLoadTS = timeseries(util, t*3600, 'Name', 'ServerUtilization');
-    serverLoadTS.DataInfo.Units = 'fraction';
-end
-
-% -------------------------------------------------------------------------
-% Helper: Initialize Model Base Workspace Parameters
+% Initialize Model Base Workspace Parameters
 % -------------------------------------------------------------------------
 function initModelBaseParameters(pureModelName)
     % Execute model's PreLoadFcn if present
-    try
-        preloadStr = get_param(pureModelName, 'PreLoadFcn');
-        if ~isempty(preloadStr)
-            evalin('base', preloadStr);
-        end
-    catch
+    preloadStr = get_param(pureModelName, 'PreLoadFcn');
+    if ~isempty(preloadStr)
+        evalin('base', preloadStr);
     end
 
     % Explicitly assign all physical parameters required by Simscape Fluids Data Center Cooling
@@ -451,13 +344,7 @@ function initModelBaseParameters(pureModelName)
     assignin('base', 'ambientTempTS', def_ts_temp);
     assignin('base', 'relHumidityTS', def_ts_rh);
 
-    try
-        assignin('base', 'environment', [def_ts_temp, def_ts_rh]);
-    catch
-        def_st(1).time = def_t; def_st(1).signals.values = def_temp; def_st(1).signals.dimensions = 1;
-        def_st(2).time = def_t; def_st(2).signals.values = def_rh; def_st(2).signals.dimensions = 1;
-        assignin('base', 'environment', def_st);
-    end
+    assignin('base', 'environment', [def_ts_temp, def_ts_rh]);
 
     def_load_val = 5000.0 + 1500.0*sin(2*pi*(def_t - 9*3600)/86400);
     assignin('base', 'heat_load', timeseries(def_load_val, def_t, 'Name', 'heat_load'));
@@ -466,4 +353,3 @@ end
 function v = getOr(s, field, default)
     if isfield(s, field), v = s.(field); else, v = default; end
 end
-

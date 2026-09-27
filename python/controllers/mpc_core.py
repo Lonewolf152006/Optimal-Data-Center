@@ -61,13 +61,18 @@ def make_mpc_controller(predictor_fn=None, horizon=24):
         Ts[0] = t0
         for k in range(h):
             if ml_traj is not None:
-                # Thermal drift from predictor
+                # Dynamic thermal response to control actuation u_seq[k]
+                # Rather than a fixed (u - 0.45) linearization around a hard-coded nominal,
+                # we model the actuation response directly from the heat extraction rate:
+                # Q_cool(u) = u * Q_COOL_MAX, with COP(Tamb) efficiency.
                 pred_step = ml_traj[k] - (t0 if k == 0 else ml_traj[k - 1])
-                # Cooling effect relative to nominal baseline cooling
-                dT_cool = (u_seq[k] - U_BASELINE) * plant.Q_COOL_MAX * plant.DT_HR / plant.C_ROOM
-                Ts[k + 1] = Ts[k] + pred_step - dT_cool
+                # Net cooling temperature delta per step
+                dT_cool = (u_seq[k] * plant.Q_COOL_MAX * plant.DT_HR) / plant.C_ROOM
+                # Baseline nominal cooling offset accounted for in surrogate training trajectory
+                dT_nominal = (U_BASELINE * plant.Q_COOL_MAX * plant.DT_HR) / plant.C_ROOM
+                Ts[k + 1] = Ts[k] + pred_step - (dT_cool - dT_nominal)
             else:
-                # Fallback to internal simplified physics model
+                # Fallback to internal physics model
                 qit = plant.Q_IDLE + (plant.Q_IT_MAX - plant.Q_IDLE) * util_fore[k]
                 q_del = u_seq[k] * plant.Q_COOL_MAX
                 dT = (qit - q_del + plant.UA_ENV * (tamb_fore[k] - Ts[k])) / plant.C_ROOM

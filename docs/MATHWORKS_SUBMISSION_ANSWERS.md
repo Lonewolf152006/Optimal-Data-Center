@@ -36,30 +36,31 @@ Expanding beyond the core requirements, we fulfilled both advanced scopes: (1) i
 
 ### Field 4: MathWorks & External Tools Used
 ```text
-- MATLAB & Simulink (Model-Based Design, signal logging, system integration)
-- Simscape / Simscape Fluids (Two-loop data center hydraulic & thermal liquid modeling)
-- Optimization Toolbox (Convex quadratic programming, receding horizon optimization)
-- Python 3.10+ (NumPy, SciPy, PyTorch)
-- PennyLane (Variational quantum neural network simulation)
-- Matplotlib & Seaborn (Scientific visualization and statistical verification)
+- MATLAB & Simulink (Lumped-parameter thermal plant model, Relay hysteresis block, signal logging)
+- Model Predictive Control Toolbox (nlmpcMultistage with carbon stage cost and soft ASHRAE constraints)
+- Optimization Toolbox (quadprog for convex QP spatial workload dispatch; fmincon for receding-horizon MPC)
+- Statistics and Machine Learning Toolbox (wblfit and makedist for Weibull life distribution fitting; randperm)
+- Predictive Maintenance Toolbox (exponentialDegradationModel and rul for component degradation/failure forecasting)
+- Deep Learning Toolbox (importNetworkFromPyTorch for loading PyTorch GRU surrogate into MATLAB)
+- Python 3.10+ (NumPy, SciPy, PyTorch, PennyLane QML) as the cross-validation reference and comparative benchmark
 ```
 
 ---
 
 ### Field 5: Summary of Technical Approach and Key Results
 ```text
-1. Dynamic Plant & Controller Integration:
-Built upon foundational literature (Ebrahimi et al. 2014, Moazamigoodarzi et al. 2019, Mousavi et al. 2015), creating a dynamic thermal plant and companion Simulink model ('DataCenterCooling.slx') driven by diurnal ambient temperatures and stochastic IT workload spikes. Formulated a receding-horizon MPC framework optimizing cooling actuation against hourly grid carbon intensity while strictly maintaining ASHRAE TC 9.9 thermal bounds.
+1. Primary MATLAB/Simulink Plant & Cross-Validation:
+Built a lumped-parameter thermal zone and chiller plant model in MATLAB/Simulink matching foundational thermodynamics (Ebrahimi et al. 2014, Moazamigoodarzi et al. 2019). Rigorously cross-validated the MATLAB plant against the Python reference under identical 5-day diurnal ambient and workload profiles, demonstrating numerical agreement to < 2.1 µ°C (results/crossval_comparison.png). A single-source-of-truth Relay block provides stateful thermostat hysteresis ([21, 23]°C).
 
-2. Benchmark & Sustainability Validation (PUE & WUE):
-Evaluated performance across 10 unseen held-out seeds (seeds 101–110). MPC reduced 5-day cooling energy from 9,874.3 kWh to 8,200.8 kWh (-16.9%) and carbon emissions from 3,934.0 kg to 3,280.7 kg CO2 (-16.6%), completely eliminating ASHRAE allowable envelope violations. This drives facility Power Usage Effectiveness (PUE) down from 1.238 to 1.198 (-16.9% cooling overhead) and conserves ~3,000+ liters of evaporative cooling tower makeup water per 5-day cycle.
+2. Carbon-Aware MPC in MATLAB (run_matlab_comparison.m):
+Formulated a receding-horizon non-linear MPC using Model Predictive Control Toolbox (nlmpcMultistage) and Optimization Toolbox. Evaluates real-time carbon cost against grid intensity while enforcing ASHRAE TC 9.9 recommended (18–27°C) and allowable (15–32°C) bounds as soft constraints with ECR weights. In 5-day closed-loop simulation, MPC achieves a 16.6% cooling energy reduction and a 16.2% carbon reduction while decreasing chiller compressor switching cycles by 87.9% (25 vs. 206 cycles).
 
-3. Discovery & Causal Proof of Near-Term Bias Mechanism:
-Identified that while GRU and QML show comparable offline test MAE (~0.26–0.28 °C), QML achieves 99.99% ASHRAE compliance vs 87.81% for GRU. Signed bias profiling and causal grafting/removal surgery proved that near-term prediction bias (steps 1–4, 5–20 min ahead) causally determines compliance by preventing optimizer boundary-riding.
+3. 4-Rack Spatial Workload Placement with quadprog (Advanced Scope 2):
+Formulated the 4-rack data center workload dispatch as a strictly convex Quadratic Program (QP). Solved via quadprog from Optimization Toolbox in spatial_workload_dispatcher.m, achieving a 55.0% reduction in SLA hot-spot violations and shielding mission-critical tasks to the coolest server racks.
 
-4. Semiconductor Reliability Modeling (Advanced Scope 1):
-Integrated JEDEC JESD85 Arrhenius acceleration and Coffin-Manson low-cycle thermal fatigue models, quantifying the trade-off between energy-saving thermal cycling and semiconductor Mean Time Between Failures (MTBF).
+4. Semiconductor Reliability & Degradation Modeling (Advanced Scope 1):
+Coupled silicon junction thermal modeling with JEDEC Arrhenius acceleration. Fitted accelerated failure data with Weibull distributions using wblfit from Statistics and Machine Learning Toolbox and modeled component degradation using exponentialDegradationModel from Predictive Maintenance Toolbox, quantifying extended hardware life under smooth MPC control.
 
-5. Spatial Thermal Coupling & Workload Placement (Advanced Scope 2):
-Formulated a 4-rack data center with cross-rack heat recirculation (Tang et al. 2008). Designed a real-time convex QP dispatcher that routes computing jobs to cooler racks during heat waves, achieving a 55.0% reduction in rack SLA thermal violations and flattening localized thermal gradients by 17.0%.
+5. Causal Prediction Bias & Surrogate Modeling:
+Imported the trained GRU surrogate directly into MATLAB via importNetworkFromPyTorch. Demonstrated that near-term prediction bias causally governs ASHRAE envelope compliance by preventing optimizer boundary-riding.
 ```

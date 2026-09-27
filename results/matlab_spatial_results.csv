@@ -1,0 +1,4 @@
+Scheduler,SLA_Hotspot_Violations,Max_Rack_Temp_C,Critical_Thermal_Exposure
+Thermal-Unaware (Uniform),55.0,28.71907383743654,458.194960043842
+Thermal-Aware QP (quadprog),65.0,27.499695967939786,440.85551958798214
+Improvement,18.181818181818183,-1.2193778694967534,-3.78429314329445

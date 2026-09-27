@@ -3,18 +3,38 @@ function serverLoadTS = generate_workload(nDays, dtMinutes, spikeDays, spikeWind
 % optional load-spike events, for driving the Server Farm block's
 % "variable load" input (Q_server) in the Data Center Cooling example.
 %
+%   serverLoadTS = generate_workload(nDays)
 %   serverLoadTS = generate_workload(nDays, dtMinutes, spikeDays, spikeWindowHr, seed)
 %
 %   spikeDays     - 1-based day indices that get a load spike, e.g. [4 5]
+%                   (default: [])
 %   spikeWindowHr - [startHr endHr] spike window on each spike day, e.g. [13 15]
+%                   (default: [13 15])
 %
 %   Returns utilization in [0,1] (time in seconds). Multiply by your
 %   model's rated IT power -- or map through whatever Q_server actually
 %   expects -- before feeding it in. Check the units on the "Signal 1"
 %   source block inside the Server Farm / Scenario subsystem.
 
+    arguments
+        nDays (1,1) {mustBePositive, mustBeInteger}
+        dtMinutes (1,1) {mustBePositive} = 5
+        spikeDays (1,:) double = []
+        spikeWindowHr (1,2) double = [13 15]
+        seed (1,1) {mustBeNumeric} = 1
+    end
+
+    % Secondary nargin guards (belt-and-suspenders)
+    if nargin < 2 || isempty(dtMinutes), dtMinutes = 5; end
+    if nargin < 3, spikeDays = []; end
+    if nargin < 4 || isempty(spikeWindowHr), spikeWindowHr = [13 15]; end
     if nargin < 5, seed = 1; end
     rng(seed);
+
+    % Guard: clamp spikeDays to valid day range
+    if ~isempty(spikeDays)
+        spikeDays = spikeDays(spikeDays >= 1 & spikeDays <= nDays);
+    end
 
     dtHr = dtMinutes/60;
     t = (0:dtHr:nDays*24-dtHr)';

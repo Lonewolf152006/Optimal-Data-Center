@@ -2,13 +2,22 @@
 
 ## Plant Model
 
-The thermal plant is a **custom Python lumped-parameter simulation** of a
-data-center thermal zone coupled with a CRAC/CRAH + chiller cooling plant.
-It is **not** the MathWorks Simscape Fluids example from their "Thermal
-Liquid" gallery — that approach was evaluated early in the project and
-dropped due to MATLAB/Simulink tooling constraints (licence availability,
-cross-platform reproducibility, and the overhead of bridging Python ML
-models to Simulink's fixed-step solver).
+The thermal plant is a **lumped-parameter simulation** of a data-center
+thermal zone coupled with a CRAC/CRAH + chiller cooling plant.
+
+The **primary reference implementation** is in Python (`python/plant/thermal_plant.py`),
+using RK4 integration.  A **matching MATLAB/Simulink companion** model is
+provided in `build_datacenter_simulink_model.m`, using the identical
+lumped-parameter physics with Simulink's native `ode45` solver.  Both
+implementations share the same parameters, COP curve, fan ramp penalty,
+and baseline controller logic (stateful hysteresis via a Relay block in
+Simulink).
+
+The full Simscape Fluids hydraulic example was evaluated early in the
+project; the lumped-parameter route was chosen for faster cross-validation
+and to eliminate the toolbox dependency barrier for reviewers.  The
+companion Simulink model can be extended to Simscape Fluids fidelity if
+the full thermal-liquid network is needed.
 
 ### Key equations
 
@@ -215,6 +224,15 @@ Where:
 Across a continuous scenario of duration $N$, normalized life consumption and relative MTBF are:
 $$L_{norm} = \frac{1}{N} \sum_{t=1}^N AF_T(t), \quad \text{Relative MTBF} = \frac{1}{L_{norm}}$$
 
+#### Weibull Life Distribution & Predictive Maintenance RUL Modeling
+To address component degradation forecasting in MATLAB (`component_reliability.m`):
+1. **Weibull Distribution Fitting (`wblfit`)**: Using Statistics and Machine Learning Toolbox, failure times are modeled via the two-parameter Weibull reliability function:
+   $$R(t) = \exp\left( - \left(\frac{t}{\eta}\right)^\beta \right)$$
+   where $\eta$ is the characteristic life (scale parameter) and $\beta \approx 2.5$ is the wear-out shape parameter. The Mean Time To Failure (MTTF) is computed as $\text{MTTF} = \eta \cdot \Gamma(1 + 1/\beta)$.
+2. **Remaining Useful Life Estimation (`exponentialDegradationModel`)**: Using Predictive Maintenance Toolbox, component degradation histories are tracked using an exponential degradation state-space model:
+   $$D(t) = \theta \exp\left(\beta t + \epsilon(t)\right)$$
+   and `rul(mdl, data, threshold)` computes the expected remaining operating hours until the failure threshold $D_{crit}$ is crossed, along with 95% confidence intervals.
+
 ### 2. Multi-Seed Reliability Results (10 Seeds)
 
 | Reliability Metric | Baseline Thermostat | MPC + Classical GRU | MPC + QML Hybrid |
@@ -279,12 +297,13 @@ Total compute demand $W_{demand}(t) = 4 \times U_{mean}(t)$ is split into two op
 1. **Critical Workload ($W_{crit} = 0.35 \times W_{demand}$)**: Strict service-level agreement (SLA), zero thermal throttling tolerance, requiring intake temperature $T_{inlet} \le 24.0^\circ\text{C}$ and silicon junction temperature $T_j \le 65.0^\circ\text{C}$.
 2. **Batch Workload ($W_{batch} = 0.65 \times W_{demand}$)**: Delay-tolerant computing (data analytics, backups) with flexible spatial placement.
 
-#### Optimal Convex Workload Dispatcher
-At each 5-minute decision step, the dispatcher solves a constrained convex Quadratic Program (QP):
-$$\min_{\{w_{crit, i}, w_{batch, i}\}} \sum_{i=1}^4 \left( w_{crit, i} \cdot T_{inlet, i} \right) + \lambda_{bal} \sum_{i=1}^4 \left(w_{tot, i} - \bar{w}\right)^2 + \lambda_{hot} \sum_{i=1}^4 \left[\max(0, T_{inlet, i} + \alpha w_{tot, i} - 24.0)\right]^2$$
-$$\text{subject to: } \sum_{i=1}^4 w_{crit, i} = W_{crit}, \quad \sum_{i=1}^4 w_{batch, i} = W_{batch}, \quad 0 \le w_{crit, i}, w_{batch, i}, \quad w_{crit, i} + w_{batch, i} \le 1.0$$
+#### Optimal Convex Workload Dispatcher (quadprog)
+At each decision step, the dispatcher solves a constrained, strictly convex Quadratic Program (QP) implemented in MATLAB via `spatial_workload_dispatcher.m`:
+$$\min_{\{w_{crit}, w_{batch}, s\}} \sum_{i=1}^4 \left( \lambda_{crit} w_{crit, i} \cdot T_{inlet, i} \right) + \lambda_{bal} \sum_{i=1}^4 \left(w_{tot, i} - \bar{w}\right)^2 + \lambda_{hot} \sum_{i=1}^4 s_i^2$$
+$$\text{subject to: } \sum_{i=1}^4 w_{crit, i} = W_{crit}, \quad \sum_{i=1}^4 w_{batch, i} = W_{batch}$$
+$$w_{crit, i} + w_{batch, i} \le 1.0, \quad \alpha(w_{crit, i} + w_{batch, i}) - s_i \le 24.0 - T_{inlet, i}, \quad 0 \le w_{crit, i}, w_{batch, i} \le 1.0, \quad s_i \ge 0$$
 
-The optimizer preferentially routes critical tasks to cold-supply racks (Racks 1 & 2) while intelligently throttling batch jobs on Rack 4, eliminating localized hot spots.
+By mapping the soft hot-spot penalty into non-negative slack variables $s_i$, the objective is purely quadratic with a positive semi-definite Hessian $H$, and all constraints are linear. This is solved with global optimality guarantees using `quadprog` from Optimization Toolbox, replacing generic nonlinear approximations. The optimizer preferentially routes critical tasks to cold-supply racks (Racks 1 & 2) while intelligently throttling batch jobs on Rack 4, eliminating localized hot spots.
 
 ---
 

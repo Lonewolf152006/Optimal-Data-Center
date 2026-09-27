@@ -1,0 +1,11 @@
+=== Phase 1 Validation Gate: MATLAB RK4 vs Python ThermalPlant ===
+Timesteps:                1440 (5 days at 5-minute resolution)
+Initial Condition:        T = 22.0000 °C, ctrlMode = 'on'
+MATLAB T_room Range:      [20.5132, 23.5226] °C
+Python T_room Range:      [20.5132, 23.5226] °C
+
+Agreement Metrics:
+  Max Absolute Difference:  4.9997339602e-11 °C (0.000050 µ°C)
+  Root Mean Square Error:   2.9206322339e-11 °C (0.000029 µ°C)
+  Mean Absolute Error:      2.5421013442e-11 °C (0.000025 µ°C)
+  Status:                   PASS (Numerically Identical)

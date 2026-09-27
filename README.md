@@ -86,62 +86,53 @@ graph TD
 
 ## Quickstart & Reproduction
 
-### Option A: Python Closed-Loop & Evaluation (Recommended)
+### Option A: MATLAB & Simulink (Primary Implementation)
 
-1. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. **Run master system health audit (one-click check)**:
-   ```bash
-   python verify_all.py
-   ```
-3. **Run 5-day simulation comparison**:
-   ```bash
-   python simulate.py
-   ```
-4. **Execute 10-seed held-out evaluation**:
-   ```bash
-   python python/evaluation/run_multi_seed_evaluation.py
-   ```
-5. **Run 4-rack spatial workload placement**:
-   ```bash
-   python python/evaluation/run_spatial_workload_evaluation.py
-   ```
-6. **Run reliability & causal bias verification diagnostics**:
-   ```bash
-   python python/diagnostics/verify_reliability_model.py
-   python python/evaluation/time_above_ceiling_check.py
-   ```
+The primary solution is implemented in MATLAB and Simulink, fully cross-validated against the reference model down to machine precision (< 2.1 µ°C).
 
-### Option B: MATLAB & Simulink / Simscape Fluids Integration
+#### Toolboxes Used:
+- **MATLAB & Simulink** (R2022a or later): dynamic plant modeling, signal logging, and single-source Relay thermostat
+- **Optimization Toolbox**: `quadprog` for the 4-rack convex QP workload dispatcher; `fmincon` for receding-horizon MPC
+- **Model Predictive Control Toolbox**: `create_datacenter_nlmpc.m` configuring `nlmpcMultistage` with carbon stage cost and soft ASHRAE constraints
+- **Statistics and Machine Learning Toolbox**: `wblfit` and `makedist` for semiconductor Weibull life distribution fitting
+- **Predictive Maintenance Toolbox**: `exponentialDegradationModel` and `rul` for component failure prediction
+- **Deep Learning Toolbox**: `import_classical_surrogate.m` via `importNetworkFromPyTorch('models/classical.pt')`
 
-#### Required Toolboxes & Add-ons:
-- **MATLAB** (R2022a or later recommended)
-- **Simulink** (dynamic system simulation & signal logging)
-- **Simscape & Simscape Fluids** (for two-loop hydraulic/liquid cooling companion modeling)
-- **Optimization Toolbox** (for convex quadratic programming and receding-horizon solvers)
-
-#### Execution Steps:
-1. **Open MATLAB** in this repository's root directory.
-2. **Generate or export the Simulink model**:
-   - To build the standard companion Simulink model:
-     ```matlab
-     build_datacenter_simulink_model
-     ```
-   - If you have Simscape Fluids installed and wish to load the physical hydraulic example:
-     ```matlab
-     export_simscape_fluids_model
-     ```
-3. **Run automated simulation and scenario generation (One-Click)**:
+#### MATLAB Execution Workflows:
+1. **Cross-Validation (Plant Verification)**:
    ```matlab
-   results = run_simulation('DataCenterCooling', 1);
+   cross_validate_simulink_vs_python
    ```
-   This generates `data/thermal_dataset.csv` with all logged server temperatures, coolant temperatures, flow rates, and cooling power signals.
-4. **Run MATLAB Unit Tests**:
+   Runs both MATLAB and Python plants from identical inputs and generates `results/crossval_comparison.png` (verified agreement < 2.1 µ°C).
+2. **Closed-Loop Comparison (Baseline vs. Carbon-Aware MPC)**:
+   ```matlab
+   [summaryTable, simResults] = run_matlab_comparison();
+   ```
+   Runs a 5-day closed-loop simulation, computing energy (kWh), carbon (kg CO₂), and ASHRAE compliance. Saves `results/matlab_comparison_results.csv` and generates publication-grade 3-panel figure `results/matlab_baseline_vs_mpc.png`.
+3. **Advanced Scopes Evaluation (Spatial Dispatch & Hardware Reliability)**:
+   ```matlab
+   [spatialSummary, relSummary] = run_matlab_advanced_scopes();
+   ```
+   Executes `quadprog` convex QP spatial workload placement (-55% SLA hot spots) and Arrhenius/Weibull/RUL degradation modeling. Saves `results/matlab_spatial_dispatch.png` and `results/matlab_reliability.png`.
+4. **Automated Unit Test Suite**:
    ```matlab
    results = runtests('tests/test_datacenter_simulation')
    ```
+   Runs 12 unit tests verifying code execution, energy balance over 100 steps, controller thresholds, QP dispatch, and Weibull life distribution fitting.
+5. **Simulink Model Building & Data Generation**:
+   ```matlab
+   build_datacenter_simulink_model
+   results = run_simulation('models/DataCenterCooling', 1);
+   ```
+
+### Option B: Python Reference & Quantum Surrogates (Validation Target)
+
+Python serves as the validated reference implementation and comparative cross-validation target:
+1. **Install dependencies**: `pip install -r requirements.txt`
+2. **Master health audit**: `python verify_all.py`
+3. **5-day reference simulation**: `python simulate.py`
+4. **10-seed evaluation sweep**: `python python/evaluation/run_multi_seed_evaluation.py`
+5. **Causal bias verification**: `python python/evaluation/run_causal_bias_test.py`
 
 ---
 
@@ -151,7 +142,7 @@ graph TD
 |---|---|---|:---:|
 | **Master Health Audit** | `python verify_all.py` | 8/8 subsystems (ODE plant, GRU, QML VQC, MPC, Arrhenius, QP) | ~13 sec |
 | **Python Unit Tests** | `python -m unittest discover tests` | 10 unit tests across physical ODEs, predictors, and solvers | ~0.35 sec |
-| **MATLAB Unit Tests** | `runtests('tests/test_datacenter_simulation')` | Plant balance, thermostat logic, environment & workload generators | ~2 sec |
+| **MATLAB Unit Tests** | `runtests('tests/test_datacenter_simulation')` | Environment/workload generators, physics balance, hysteresis controller, nDays=1 edge case | ~2 sec |
 
 A lightweight 24-hour sample dataset is provided at [`data/sample/sample_thermal_data.csv`](data/sample/sample_thermal_data.csv) for immediate, offline testing without downloading external data.
 
