@@ -325,9 +325,21 @@ end
 
 % Helper: Assign all required Simscape Fluids physical parameters to base workspace
 function initModelBaseParameters(pureModelName)
+    repoRoot = fileparts(mfilename('fullpath'));
+    if ~isempty(repoRoot)
+        modelsDir = fullfile(repoRoot, 'models');
+        if exist(modelsDir, 'dir')
+            addpath(modelsDir);
+        end
+    end
+
     preloadStr = get_param(pureModelName, 'PreLoadFcn');
     if ~isempty(preloadStr)
-        evalin('base', preloadStr);
+        try
+            evalin('base', preloadStr);
+        catch ME
+            fprintf('Note: PreLoadFcn encountered (%s). Using project setup parameters.\n', ME.message);
+        end
     end
 
     assignin('base', 'T_chiller', 18);

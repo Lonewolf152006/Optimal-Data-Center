@@ -315,10 +315,24 @@ end
 % Initialize Model Base Workspace Parameters
 % -------------------------------------------------------------------------
 function initModelBaseParameters(pureModelName)
+    % Ensure models/ directory is on MATLAB path
+    scriptPath = mfilename('fullpath');
+    if ~isempty(scriptPath)
+        scriptDir = fileparts(scriptPath);
+        modelsDir = fullfile(scriptDir, 'models');
+        if exist(modelsDir, 'dir')
+            addpath(modelsDir);
+        end
+    end
+
     % Execute model's PreLoadFcn if present
     preloadStr = get_param(pureModelName, 'PreLoadFcn');
     if ~isempty(preloadStr)
-        evalin('base', preloadStr);
+        try
+            evalin('base', preloadStr);
+        catch ME
+            fprintf('Note: PreLoadFcn encountered (%s). Using project setup parameters.\n', ME.message);
+        end
     end
 
     % Explicitly assign all physical parameters required by Simscape Fluids Data Center Cooling
