@@ -250,12 +250,10 @@ classdef test_datacenter_simulation < matlab.unittest.TestCase
             % Test create_datacenter_nlmpc function
             nlobj = create_datacenter_nlmpc(24);
             testCase.verifyNotEmpty(nlobj, 'create_datacenter_nlmpc must return non-empty object/struct');
-            if isstruct(nlobj)
-                testCase.verifyEqual(nlobj.PredictionHorizon, 24, ...
-                    'Prediction horizon must be 24');
-                testCase.verifyEqual(nlobj.Ts, 300, ...
-                    'Sample time Ts must be 300 seconds (5 minutes)');
-            end
+            testCase.verifyEqual(nlobj.PredictionHorizon, 24, ...
+                'Prediction horizon must be 24');
+            testCase.verifyEqual(nlobj.Ts, 300, ...
+                'Sample time Ts must be 300 seconds (5 minutes)');
         end
     end
 end

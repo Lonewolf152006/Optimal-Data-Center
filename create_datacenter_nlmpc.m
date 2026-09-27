@@ -59,21 +59,18 @@ nlobj.MV.RateMax = 0.4;
 nlobj.Model.StateFcn = @datacenter_state_transition;
 nlobj.Model.IsContinuousTime = false;
 
-% Assign Stage Cost and Output Constraints for all prediction stages
+% State bounds (ASHRAE Allowable Envelope [15, 32] °C)
+nlobj.States(1).Min = 15.0;
+nlobj.States(1).Max = 32.0;
+
+% Assign Stage Cost for all prediction stages
 for k = 1:p
     % Stage cost function evaluates carbon footprint at step k
     nlobj.Stages(k).CostFcn = @datacenter_stage_cost;
-    
-    % Soft Output Constraints (ASHRAE Recommended: 18 - 27 °C)
-    % Lower and upper bounds on room temperature state
-    nlobj.Stages(k).StateMin = 18.0; % Soft lower recommended bound
-    nlobj.Stages(k).StateMax = 27.0; % Soft upper recommended bound
 end
 
 % Terminal stage cost
 nlobj.Stages(p+1).CostFcn = @datacenter_terminal_cost;
-nlobj.Stages(p+1).StateMin = 18.0;
-nlobj.Stages(p+1).StateMax = 27.0;
 
 end
 
