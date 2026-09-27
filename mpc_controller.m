@@ -88,7 +88,9 @@ ml_traj = [];
 if ~isempty(surrogate_fn)
     try
         ml_traj = surrogate_fn(T_current, [util(:), tamb(:), carbon(:)]);
-    catch
+    catch ME
+        warning('mpc_controller:surrogateEvaluationFailed', ...
+            'Surrogate function evaluation failed (%s). Using lumped-parameter model.', ME.message);
         ml_traj = [];
     end
 end

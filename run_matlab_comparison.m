@@ -80,10 +80,12 @@ carbonIntensity = max(180.0, carbonIntensity);
 
 % Load or instantiate surrogate for MPC
 surrogate = [];
-try
-    surrogate = import_classical_surrogate();
-catch
-    % Graceful fallback: MPC uses internal forward physics model
+if exist('import_classical_surrogate', 'file')
+    try
+        surrogate = import_classical_surrogate();
+    catch ME
+        fprintf('Note: import_classical_surrogate did not initialize (%s). MPC using forward physics model.\n', ME.message);
+    end
 end
 
 % -------------------------------------------------------------------------

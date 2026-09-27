@@ -45,7 +45,8 @@ hasDLT = exist('importNetworkFromPyTorch', 'file') || exist('importNetworkFromPy
 if hasDLT && exist(ptPath, 'file')
     try
         importedNet = importNetworkFromPyTorch(ptPath);
-    catch
+    catch ME
+        fprintf('Note: importNetworkFromPyTorch did not load (%s). Using native weights from %s\n', ME.message, matPath);
         importedNet = [];
     end
 end

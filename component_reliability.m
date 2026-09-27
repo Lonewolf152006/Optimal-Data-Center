@@ -130,8 +130,8 @@ if has_pdm
         [estRUL, ciRUL] = predict(mdl, deg_data, threshold_failure);
         rul_hours = double(estRUL);
         rul_ci = double(ciRUL);
-    catch
-        % Fallback linear-exponential projection
+    catch ME
+        fprintf('Note: exponentialDegradationModel prediction failed (%s). Using analytical degradation estimation.\n', ME.message);
         current_deg = cum_damage_hours(end);
         rate = mean_AF;
         rul_hours = max(0, (threshold_failure - current_deg) / max(rate, 1e-6));
