@@ -276,6 +276,7 @@ function cross_validate_simulink_model(t_hr, util, t_amb, T_py, dt_hr)
     if ~bdIsLoaded(modelName)
         load_system(modelPath);
     end
+    initModelBaseParameters(modelName);
     stopTime = t_sec(end);
     set_param(modelName, 'StopTime', num2str(stopTime));
 
@@ -320,4 +321,25 @@ function s = verdictStr(maxErr)
     else
         s = sprintf('FAIL — Max divergence %.4f degC exceeds tolerance', maxErr);
     end
+end
+
+% Helper: Assign all required Simscape Fluids physical parameters to base workspace
+function initModelBaseParameters(pureModelName)
+    preloadStr = get_param(pureModelName, 'PreLoadFcn');
+    if ~isempty(preloadStr)
+        evalin('base', preloadStr);
+    end
+
+    assignin('base', 'T_chiller', 18);
+    assignin('base', 'server_pipe_D', 0.02);
+    assignin('base', 'server_pipe_L', 12);
+    assignin('base', 'server_pipe_thickness', 0.002);
+    assignin('base', 'server_num_pipes', 800);
+    assignin('base', 'rho_pipe', 7800);
+    assignin('base', 'cp_pipe', 500);
+    assignin('base', 'port_area', 0.2);
+    assignin('base', 'T_reservoir', 23);
+    assignin('base', 'fan_area', 15);
+    assignin('base', 'tower_height', 3);
+    assignin('base', 'tower_area', 15);
 end
