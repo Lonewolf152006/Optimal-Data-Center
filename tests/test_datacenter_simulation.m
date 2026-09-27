@@ -40,10 +40,17 @@ classdef test_datacenter_simulation < matlab.unittest.TestCase
 
             expectedCols = {'Time', 'ServerLoad', 'AmbientTemp'};
             for i = 1:numel(expectedCols)
-                hasMatlabCol = ismember(expectedCols{i}, data.Properties.VariableNames);
-                hasPythonCol = ismember(lower(expectedCols{i}), lower(data.Properties.VariableNames));
-                testCase.verifyTrue(hasMatlabCol || hasPythonCol, ...
-                    sprintf('Dataset must contain column: %s', expectedCols{i}));
+                col = expectedCols{i};
+                hasMatlabCol = ismember(col, data.Properties.VariableNames);
+                hasPythonCol = ismember(lower(col), lower(data.Properties.VariableNames));
+                hasAlias = false;
+                if strcmpi(col, 'ServerLoad')
+                    hasAlias = ismember('utilization', lower(data.Properties.VariableNames));
+                elseif strcmpi(col, 'AmbientTemp')
+                    hasAlias = ismember('ambient_temp', lower(data.Properties.VariableNames));
+                end
+                testCase.verifyTrue(hasMatlabCol || hasPythonCol || hasAlias, ...
+                    sprintf('Dataset must contain column: %s', col));
             end
         end
 

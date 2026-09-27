@@ -68,10 +68,6 @@ for k = 1:p
     % Lower and upper bounds on room temperature state
     nlobj.Stages(k).StateMin = 18.0; % Soft lower recommended bound
     nlobj.Stages(k).StateMax = 27.0; % Soft upper recommended bound
-    
-    % Slack variable ECR weights (Equal Concern for Relaxation)
-    % Penalizes exceeding ASHRAE recommended range
-    nlobj.Model.CustomSlackFunction = true;
 end
 
 % Terminal stage cost
