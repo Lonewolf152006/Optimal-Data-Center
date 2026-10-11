@@ -114,11 +114,11 @@ A complete 10-slide presentation deck outline and 2-minute demonstration video s
 - **Title:** Code Quality, Tooling, and Verification
 - **Visuals:** Screenshot of `README.md`, MATLAB scripts, and requirements.
 - **Key Points:**
-  - Fully automated MATLAB scripts: `build_datacenter_simulink_model.m`, `export_simscape_fluids_model.m`, `run_simulation.m`.
-  - Clean Python package structure with deterministic random seeds for full reproducibility.
+  - Primary MATLAB engineering suite: `run_matlab_comparison.m`, `mpc_controller.m`, `create_datacenter_nlmpc.m`, `spatial_workload_dispatcher.m`, `component_reliability.m`, `causal_bias_analysis_gp.m`, `plant_step.m`, and `baseline_thermostat.m`.
+  - Clean Python reference package structure with deterministic random seeds for full reproducibility.
   - Comprehensive documentation in `docs/METHODOLOGY.md` and `docs/MATHWORKS_SUBMISSION_ANSWERS.md`.
 - **Speaker Script:**
-  > *"All software is packaged for one-click verification. We provide native MATLAB scripts that programmatically build and simulate the companion Simulink model, as well as a fully modular Python pipeline for multi-seed verification and QML training."*
+  > *"All software is packaged for one-click verification. We provide native MATLAB scripts that simulate the plant, execute receding-horizon MPC, solve the spatial QP, and evaluate hardware reliability, cross-validated against the reference Python models."*
 
 ---
 

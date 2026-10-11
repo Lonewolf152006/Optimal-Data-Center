@@ -37,9 +37,10 @@ Expanding beyond the core requirements, we fulfilled both advanced scopes: (1) i
 ### Field 4: MathWorks & External Tools Used
 ```text
 - MATLAB & Simulink (Lumped-parameter thermal plant model, Relay hysteresis block, signal logging)
+- Simscape & Simscape Fluids (Multi-component hydraulic liquid cooling network with chiller, pumps, cooling tower)
 - Model Predictive Control Toolbox (nlmpcMultistage with carbon stage cost and soft ASHRAE constraints)
 - Optimization Toolbox (quadprog for convex QP spatial workload dispatch; fmincon for receding-horizon MPC)
-- Statistics and Machine Learning Toolbox (wblfit and makedist for Weibull life distribution fitting; randperm)
+- Statistics and Machine Learning Toolbox (wblfit/makedist for Weibull life distribution fitting; fitrgp for Gaussian Process causal variance; randperm)
 - Predictive Maintenance Toolbox (exponentialDegradationModel and rul for component degradation/failure forecasting)
 - Deep Learning Toolbox (importNetworkFromPyTorch for loading PyTorch GRU surrogate into MATLAB)
 - Python 3.10+ (NumPy, SciPy, PyTorch, PennyLane QML) as the cross-validation reference and comparative benchmark
@@ -50,7 +51,7 @@ Expanding beyond the core requirements, we fulfilled both advanced scopes: (1) i
 ### Field 5: Summary of Technical Approach and Key Results
 ```text
 1. Primary MATLAB/Simulink Plant & Cross-Validation:
-Built a lumped-parameter thermal zone and chiller plant model in MATLAB/Simulink matching foundational thermodynamics (Ebrahimi et al. 2014, Moazamigoodarzi et al. 2019). Rigorously cross-validated the MATLAB plant against the Python reference under identical 5-day diurnal ambient and workload profiles, demonstrating numerical agreement to < 2.1 µ°C (results/crossval_comparison.png). A single-source-of-truth Relay block provides stateful thermostat hysteresis ([21, 23]°C).
+Delivered a dual-model plant strategy: (a) a native lumped-parameter thermal zone and chiller model (models/DataCenterLumpedPlant.slx and plant_step.m) matching foundational thermodynamics (Ebrahimi et al. 2014) and cross-validated against the Python reference to < 10⁻¹⁰ °C (results/plant_validation_comparison.png); and (b) a full Simscape Fluids multi-loop hydraulic model (models/DataCenterCooling.slx) with all dependencies committed. A single-source-of-truth Relay block (baseline_thermostat.m) provides stateful hysteresis ([21, 23]°C).
 
 2. Carbon-Aware MPC in MATLAB (run_matlab_comparison.m):
 Formulated a receding-horizon non-linear MPC using Model Predictive Control Toolbox (nlmpcMultistage) and Optimization Toolbox. Evaluates real-time carbon cost against grid intensity while enforcing ASHRAE TC 9.9 recommended (18–27°C) and allowable (15–32°C) bounds as soft constraints with ECR weights. In 5-day closed-loop simulation, MPC achieves a 16.6% cooling energy reduction and a 16.2% carbon reduction while decreasing chiller compressor switching cycles by 87.9% (25 vs. 206 cycles).

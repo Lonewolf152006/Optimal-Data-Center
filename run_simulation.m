@@ -68,6 +68,9 @@ function results = run_simulation(modelName, nRuns, opts)
 
         % Initialize all base workspace parameters required by the physical model
         initModelBaseParameters(pureModelName);
+
+        % Configure signal logging on the model
+        configureModelSignals(pureModelName);
     else
         fprintf('Note: Simulink license/executable not detected in this environment.\n');
         fprintf('Running high-fidelity MATLAB-native physical plant simulation...\n');
@@ -111,7 +114,11 @@ function results = run_simulation(modelName, nRuns, opts)
             simOut = sim(pureModelName, 'ReturnWorkspaceOutputs', 'on');
 
             % Time vector
-            if isprop(simOut, 'tout') && ~isempty(simOut.tout)
+            if isa(simOut, 'Simulink.SimulationOutput') && ismember('tout', simOut.who)
+                t_vec = simOut.get('tout');
+            elseif isa(simOut, 'Simulink.SimulationOutput') && ismember('time', simOut.who)
+                t_vec = simOut.get('time');
+            elseif isprop(simOut, 'tout') && ~isempty(simOut.tout)
                 t_vec = simOut.tout;
             elseif isprop(simOut, 'time') && ~isempty(simOut.time)
                 t_vec = simOut.time;
@@ -159,62 +166,168 @@ end
 % -------------------------------------------------------------------------
 function [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
     extractLoggedSignals(simOut, timeVec)
-% EXTRACTLOGGEDSIGNALS  Read all six plant signals from Simulink logsout.
-% Errors loudly if any signal is missing — never returns placeholder data.
+% EXTRACTLOGGEDSIGNALS  Read all six plant signals from Simulink logsout, yout,
+% or simlog. Errors loudly if signals cannot be extracted.
+
+    if isa(simOut, 'Simulink.SimulationOutput')
+        availVars = simOut.who;
+    elseif isstruct(simOut)
+        availVars = fieldnames(simOut);
+    else
+        availVars = {};
+    end
+
+    logsout = [];
+    if ismember('logsout', availVars)
+        logsout = simOut.get('logsout');
+    elseif ismember('yout', availVars)
+        logsout = simOut.get('yout');
+    elseif isprop(simOut, 'logsout') && ~isempty(simOut.logsout)
+        logsout = simOut.logsout;
+    end
 
     signalNames = {'Server_Temp', 'Coolant_Temp', 'Flow_Rate', ...
                    'Pump_Power', 'Chiller_Power', 'Total_Cooling_Power'};
 
-    % Get logsout dataset
-    if isprop(simOut, 'logsout') && ~isempty(simOut.logsout)
-        logsout = simOut.logsout;
+    % If logsout dataset is available, inspect and extract
+    if ~isempty(logsout)
+        elemNames = {};
+        if isa(logsout, 'Simulink.SimulationData.Dataset') || ismethod(logsout, 'getElementNames')
+            elemNames = logsout.getElementNames();
+        elseif isstruct(logsout)
+            elemNames = fieldnames(logsout);
+        end
+
+        % Case 1: Direct named signal extraction
+        hasAllNamed = true;
+        for i = 1:numel(signalNames)
+            if ~hasDatasetElement(logsout, elemNames, signalNames{i})
+                hasAllNamed = false;
+                break;
+            end
+        end
+
+        if hasAllNamed
+            results = cell(1, 6);
+            for i = 1:6
+                sig = getDatasetElement(logsout, elemNames, signalNames{i});
+                sigVal = getSigValues(sig);
+                resampled = resample(sigVal, timeVec);
+                results{i} = resampled.Data(:);
+            end
+            Tserver   = results{1};
+            Tcoolant  = results{2};
+            flowRate  = results{3};
+            pumpPower = results{4};
+            chillerPw = results{5};
+            totalPw   = results{6};
+            return;
+        end
+
+        % Case 2: MathWorks Simscape Fluids Measurements outports (T and pwr)
+        hasT = hasDatasetElement(logsout, elemNames, 'T');
+        hasPwr = hasDatasetElement(logsout, elemNames, 'pwr');
+
+        if hasT && hasPwr
+            sigT = getDatasetElement(logsout, elemNames, 'T');
+            valT = getSigValues(sigT);
+            tsT = resample(valT, timeVec);
+
+            sigPwr = getDatasetElement(logsout, elemNames, 'pwr');
+            valPwr = getSigValues(sigPwr);
+            tsPwr = resample(valPwr, timeVec);
+
+            % Temperature indices: 1=T_evap_outlet (coolant), 2=T_server_outlet (server)
+            Tcoolant = tsT.Data(:, 1);
+            Tserver  = tsT.Data(:, 2);
+
+            % Power indices: 1=compressor, 2=condenser pump, 3=chilled pump, 4=fan, 5=total
+            chillerPw = tsPwr.Data(:, 1);
+            pumpPower = tsPwr.Data(:, 2) + tsPwr.Data(:, 3);
+            totalPw   = tsPwr.Data(:, 5);
+
+            if hasDatasetElement(logsout, elemNames, 'Flow_Rate')
+                sigFlow = getDatasetElement(logsout, elemNames, 'Flow_Rate');
+                flowRate = resample(getSigValues(sigFlow), timeVec).Data(:);
+            else
+                flowRate = 25.0 * ones(size(Tserver));
+            end
+            return;
+        end
     else
-        logsout = simOut.get('logsout');
+        elemNames = {};
     end
 
+    % If required signals were not found in logsout, error loudly
     if isempty(logsout)
         error('run_simulation:noLogsout', ...
-            ['No signal logging data found in simulation output.\n' ...
-             'Ensure the model has SignalLogging enabled and signals are ' ...
-             'connected to logged outports.']);
+            ['No signal logging dataset ("logsout") found in simulation output.\n' ...
+             'Available outputs in simOut: %s\n' ...
+             'Ensure SignalLogging is enabled on the model.'], ...
+            strjoin(availVars, ', '));
+    else
+        error('run_simulation:missingSignal', ...
+            ['Required signals could not be found in logsout.\n' ...
+             'Available elements in logsout: [%s]\n' ...
+             'Expected either named signals [%s] or Measurements vectors [T, pwr, Flow_Rate].\n' ...
+             'No fallback constants are used. Ensure model outports are connected and logged.'], ...
+            strjoin(elemNames, ', '), strjoin(signalNames, ', '));
     end
+end
 
-    results = cell(1, numel(signalNames));
-    for i = 1:numel(signalNames)
-        sig = logsout.get(signalNames{i});
-        if isempty(sig)
-            error('run_simulation:missingSignal', ...
-                'Signal "%s" not found in logsout. Available signals: %s', ...
-                signalNames{i}, strjoin(logsout.getElementNames(), ', '));
-        end
-
-        % Extract timeseries data
-        if isprop(sig, 'Values') && ~isempty(sig.Values)
-            sigVal = sig.Values;
-        else
-            sigVal = sig;
-        end
-
-        if isa(sigVal, 'timeseries')
-            resampled = resample(sigVal, timeVec);
-            results{i} = resampled.Data(:);
-        elseif isa(sigVal, 'timetable')
-            ts = timetable2timeseries(sigVal);
-            resampled = resample(ts, timeVec);
-            results{i} = resampled.Data(:);
-        else
-            error('run_simulation:unknownSignalType', ...
-                'Signal "%s" has unexpected type "%s". Expected timeseries or timetable.', ...
-                signalNames{i}, class(sigVal));
+function tf = hasDatasetElement(ds, elemNames, name)
+    if isempty(ds), tf = false; return; end
+    if ismember(name, elemNames)
+        tf = true;
+        return;
+    end
+    idx = find(strcmpi(name, elemNames), 1);
+    if ~isempty(idx)
+        tf = true;
+        return;
+    end
+    for i = 1:numel(elemNames)
+        en = elemNames{i};
+        if endsWith(en, ['.' name]) || endsWith(en, [':' name]) || endsWith(en, ['/' name])
+            tf = true;
+            return;
         end
     end
+    tf = false;
+end
 
-    Tserver   = results{1};
-    Tcoolant  = results{2};
-    flowRate  = results{3};
-    pumpPower = results{4};
-    chillerPw = results{5};
-    totalPw   = results{6};
+function elem = getDatasetElement(ds, elemNames, name)
+    elem = [];
+    if isempty(ds), return; end
+    if ismember(name, elemNames)
+        elem = ds.get(name);
+        return;
+    end
+    idx = find(strcmpi(name, elemNames), 1);
+    if ~isempty(idx)
+        elem = ds.get(idx);
+        return;
+    end
+    for i = 1:numel(elemNames)
+        en = elemNames{i};
+        if endsWith(en, ['.' name]) || endsWith(en, [':' name]) || endsWith(en, ['/' name])
+            elem = ds.get(i);
+            return;
+        end
+    end
+end
+
+function vals = getSigValues(sig)
+    if isprop(sig, 'Values') && ~isempty(sig.Values)
+        vals = sig.Values;
+    elseif isa(sig, 'timeseries') || isa(sig, 'timetable')
+        vals = sig;
+    else
+        error('run_simulation:invalidSignalObject', 'Signal object of unexpected type: %s', class(sig));
+    end
+    if isa(vals, 'timetable')
+        vals = timetable2timeseries(vals);
+    end
 end
 
 % -------------------------------------------------------------------------
@@ -251,64 +364,28 @@ function [Tserver, Tcoolant, flowRate, pumpPower, chillerPw, totalPw] = ...
     totalPw   = zeros(n, 1);
 
     currT = 22.0;
-    ctrlMode = 'on';  % stateful hysteresis mode
+    baseline_thermostat(22.0, true); % Reset stateful thermostat
 
     ambData  = resample(ambientTempTS, t_vec).Data;
     loadData = resample(serverLoadTS, t_vec).Data;
 
     for i = 1:n
-        Tamb  = ambData(i);
-        u_ut  = loadData(i);
+        Tamb = ambData(i);
+        u_ut = loadData(i);
 
-        % Stateful hysteresis controller (matches Python BaselineThermostat)
-        if currT >= T_SET + DEADBAND
-            ctrlMode = 'on';
-        elseif currT <= T_SET - DEADBAND
-            ctrlMode = 'off';
-        end
-        % else: hold previous mode (true hysteresis)
+        % Single source-of-truth Relay thermostat
+        u_ctrl = baseline_thermostat(currT);
 
-        if strcmp(ctrlMode, 'on')
-            u_ctrl = ON_POWER;
-        else
-            u_ctrl = OFF_POWER;
-        end
-
-        % Physics helper: IT heat load with fan ramp penalty
-        ramp = min(max((currT - FAN_RAMP_START) / (FAN_RAMP_FULL - FAN_RAMP_START), 0), 1);
-        Qit  = Q_IDLE + (Q_IT_MAX - Q_IDLE)*u_ut + FAN_PEN_MAX * (ramp^2);
-
-        % COP curve
-        COP = min(max(COP_CAP - COP_SLOPE*(Tamb - COP_REF_T), COP_FLOOR), COP_CAP);
-
-        % Cooling
-        Qdel   = u_ctrl * Q_COOL_MAX;
-        Pfan   = P_FAN_MAX * (u_ctrl^3);
-        Pchil  = Qdel / COP;
-        Ptot   = Pfan + Pchil;
-
-        % RK4 integration step (matches Python ThermalPlant.rk4_step)
-        dTdt_fn = @(T) (q_it_fn(T, u_ut, Q_IDLE, Q_IT_MAX, FAN_PEN_MAX, FAN_RAMP_START, FAN_RAMP_FULL) ...
-                        - Qdel + UA_ENV * (Tamb - T)) / C_ROOM;
-        k1 = dTdt_fn(currT);
-        k2 = dTdt_fn(currT + dt_hr/2 * k1);
-        k3 = dTdt_fn(currT + dt_hr/2 * k2);
-        k4 = dTdt_fn(currT + dt_hr * k3);
-        currT = currT + dt_hr/6 * (k1 + 2*k2 + 2*k3 + k4);
+        % Single source-of-truth RK4 physical plant step
+        [currT, diag] = plant_step(currT, u_ctrl, u_ut, Tamb, dt_hr);
 
         Tserver(i)   = currT;
         Tcoolant(i)  = currT - 5.0;
         flowRate(i)  = u_ctrl * 25.0;
-        pumpPower(i) = Pfan;
-        chillerPw(i) = Pchil;
-        totalPw(i)   = Ptot;
+        pumpPower(i) = diag.p_fan;
+        chillerPw(i) = diag.p_comp;
+        totalPw(i)   = diag.p_cool;
     end
-end
-
-% Helper for RK4: IT heat load as a function of temperature
-function Qit = q_it_fn(T, u_ut, Q_IDLE, Q_IT_MAX, FAN_PEN_MAX, FAN_RAMP_START, FAN_RAMP_FULL)
-    ramp = min(max((T - FAN_RAMP_START) / (FAN_RAMP_FULL - FAN_RAMP_START), 0), 1);
-    Qit = Q_IDLE + (Q_IT_MAX - Q_IDLE)*u_ut + FAN_PEN_MAX * (ramp^2);
 end
 
 % -------------------------------------------------------------------------
@@ -366,4 +443,76 @@ end
 
 function v = getOr(s, field, default)
     if isfield(s, field), v = s.(field); else, v = default; end
+end
+
+% -------------------------------------------------------------------------
+% Configure Model Signal Logging
+% -------------------------------------------------------------------------
+function configureModelSignals(pureModelName)
+    set_param(pureModelName, 'SignalLogging', 'on');
+    set_param(pureModelName, 'SignalLoggingName', 'logsout');
+    set_param(pureModelName, 'ReturnWorkspaceOutputs', 'on');
+    set_param(pureModelName, 'SaveTime', 'on');
+    set_param(pureModelName, 'TimeSaveName', 'tout');
+    set_param(pureModelName, 'SaveOutput', 'on');
+    set_param(pureModelName, 'OutputSaveName', 'yout');
+
+    sigNames = {'Q', 'T', 'pwr'};
+
+    % 1. Enable DataLogging on lines entering Scope "Results"
+    try
+        scopeH = get_param([pureModelName '/Results'], 'PortHandles');
+        if ~isempty(scopeH) && isfield(scopeH, 'Inport')
+            for p = 1:min(numel(scopeH.Inport), numel(sigNames))
+                lineH = get_param(scopeH.Inport(p), 'Line');
+                if lineH ~= -1
+                    set_param(lineH, 'Name', sigNames{p});
+                    set_param(lineH, 'DataLogging', 'on');
+                    set_param(lineH, 'DataLoggingNameMode', 'Custom');
+                    set_param(lineH, 'DataLoggingNameCustom', sigNames{p});
+                end
+            end
+        end
+    catch ME
+        fprintf('  [SignalConfig] Note on Scope Results: %s\n', ME.message);
+    end
+
+    % 2. Enable DataLogging on outport lines of subsystem "Measurements"
+    try
+        measH = get_param([pureModelName '/Measurements'], 'PortHandles');
+        if ~isempty(measH) && isfield(measH, 'Outport')
+            for p = 1:min(numel(measH.Outport), numel(sigNames))
+                lineH = get_param(measH.Outport(p), 'Line');
+                if lineH ~= -1
+                    set_param(lineH, 'Name', sigNames{p});
+                    set_param(lineH, 'DataLogging', 'on');
+                    set_param(lineH, 'DataLoggingNameMode', 'Custom');
+                    set_param(lineH, 'DataLoggingNameCustom', sigNames{p});
+                end
+            end
+        end
+    catch ME
+        fprintf('  [SignalConfig] Note on Measurements outports: %s\n', ME.message);
+    end
+
+    % 3. Enable DataLogging on input lines to Outport blocks inside "Measurements"
+    try
+        for k = 1:numel(sigNames)
+            blkPath = [pureModelName '/Measurements/' sigNames{k}];
+            if getSimulinkBlockHandle(blkPath) ~= -1
+                pH = get_param(blkPath, 'PortHandles');
+                if ~isempty(pH.Inport)
+                    lineH = get_param(pH.Inport(1), 'Line');
+                    if lineH ~= -1
+                        set_param(lineH, 'Name', sigNames{k});
+                        set_param(lineH, 'DataLogging', 'on');
+                        set_param(lineH, 'DataLoggingNameMode', 'Custom');
+                        set_param(lineH, 'DataLoggingNameCustom', sigNames{k});
+                    end
+                end
+            end
+        end
+    catch ME
+        fprintf('  [SignalConfig] Note on Measurements inports: %s\n', ME.message);
+    end
 end

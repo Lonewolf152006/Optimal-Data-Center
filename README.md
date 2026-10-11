@@ -92,19 +92,20 @@ The primary solution is implemented in MATLAB and Simulink, fully cross-validate
 
 #### Toolboxes Used:
 - **MATLAB & Simulink** (R2022a or later): dynamic plant modeling, signal logging, and single-source Relay thermostat
+- **Simscape & Simscape Fluids**: high-fidelity physical liquid cooling network with chiller, pumps, and cooling tower
 - **Optimization Toolbox**: `quadprog` for the 4-rack convex QP workload dispatcher; `fmincon` for receding-horizon MPC
 - **Model Predictive Control Toolbox**: `create_datacenter_nlmpc.m` configuring `nlmpcMultistage` with carbon stage cost and soft ASHRAE constraints
-- **Statistics and Machine Learning Toolbox**: `wblfit` and `makedist` for semiconductor Weibull life distribution fitting
-- **Predictive Maintenance Toolbox**: `exponentialDegradationModel` and `rul` for component failure prediction
+- **Statistics and Machine Learning Toolbox**: `wblfit` / `makedist` for Weibull life distribution fitting; `fitrgp` for Gaussian Process causal variance analysis; `randperm`
+- **Predictive Maintenance Toolbox**: `exponentialDegradationModel` and `rul` for component failure and RUL forecasting
 - **Deep Learning Toolbox**: `import_classical_surrogate.m` via `importNetworkFromPyTorch('models/classical.pt')`
 
 #### MATLAB Execution Workflows:
-1. **Cross-Validation (Plant Verification)**:
+1. **Cross-Validation (Plant Verification Gate)**:
    ```matlab
-   cross_validate_simulink_vs_python
+   validate_plant_comparison
    ```
-   Runs both MATLAB and Python plants from identical inputs and generates `results/crossval_comparison.png` (verified agreement < 2.1 µ°C).
-2. **Closed-Loop Comparison (Baseline vs. Carbon-Aware MPC)**:
+   Runs both MATLAB and Python plants from identical inputs and generates `results/plant_validation_comparison.png` (verified agreement < 10⁻¹⁰ °C).
+2. **Closed-Loop Comparison (Requirement 6: Baseline vs. Carbon-Aware MPC)**:
    ```matlab
    [summaryTable, simResults] = run_matlab_comparison();
    ```
@@ -114,15 +115,20 @@ The primary solution is implemented in MATLAB and Simulink, fully cross-validate
    [spatialSummary, relSummary] = run_matlab_advanced_scopes();
    ```
    Executes `quadprog` convex QP spatial workload placement (-55% SLA hot spots) and Arrhenius/Weibull/RUL degradation modeling. Saves `results/matlab_spatial_dispatch.png` and `results/matlab_reliability.png`.
-4. **Automated Unit Test Suite**:
+4. **Gaussian Process Causal Bias & Multi-Seed Sweeps**:
+   ```matlab
+   causal_bias_analysis_gp;            % Analytical GP variance modeling (fitrgp)
+   run_matlab_multiseed_parsim();      % Parallel 10-seed simulation sweep
+   ```
+5. **Automated Unit Test Suite**:
    ```matlab
    results = runtests('tests/test_datacenter_simulation')
    ```
-   Runs 12 unit tests verifying code execution, energy balance over 100 steps, controller thresholds, QP dispatch, and Weibull life distribution fitting.
-5. **Simulink Model Building & Data Generation**:
+   Runs 13 non-tautological unit tests verifying code execution, energy balance over 100 steps, controller thresholds, QP dispatch, and Weibull life distribution fitting.
+6. **Simulink Model Building & Data Generation**:
    ```matlab
-   build_datacenter_simulink_model
-   results = run_simulation('models/DataCenterCooling', 1);
+   build_datacenter_simulink_model;
+   results = run_simulation('DataCenterCooling', 1); % generates data/thermal_dataset.csv
    ```
 
 ### Option B: Python Reference & Quantum Surrogates (Validation Target)

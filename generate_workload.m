@@ -20,7 +20,7 @@ function serverLoadTS = generate_workload(nDays, dtMinutes, spikeDays, spikeWind
         nDays (1,1) {mustBePositive, mustBeInteger}
         dtMinutes (1,1) {mustBePositive} = 5
         spikeDays (1,:) double = []
-        spikeWindowHr (1,2) double = [13 15]
+        spikeWindowHr double = [13 15]
         seed (1,1) {mustBeNumeric} = 1
     end
 

@@ -78,37 +78,20 @@ function validate_plant_comparison()
     T_matlab = zeros(n_steps, 1);
     u_matlab = zeros(n_steps, 1);
     currT = 22.0;
-    ctrlMode = 'on';
+    baseline_thermostat(22.0, true); % Reset stateful thermostat
 
     for i = 1:n_steps
         Tamb = t_amb(i);
         u_ut = util(i);
 
-        % Stateful hysteresis controller
-        if currT >= T_SET + DEADBAND
-            ctrlMode = 'on';
-        elseif currT <= T_SET - DEADBAND
-            ctrlMode = 'off';
-        end
-
-        if strcmp(ctrlMode, 'on')
-            u_ctrl = ON_POWER;
-        else
-            u_ctrl = OFF_POWER;
-        end
+        % Single source-of-truth Relay thermostat
+        u_ctrl = baseline_thermostat(currT);
 
         T_matlab(i) = currT;
         u_matlab(i) = u_ctrl;
 
-        % RK4 step
-        dTdt = @(T) rk4_dTdt(T, u_ut, u_ctrl, Tamb, ...
-            Q_IDLE, Q_IT_MAX, FAN_PEN_MAX, FAN_RAMP_START, FAN_RAMP_FULL, ...
-            Q_COOL_MAX, UA_ENV, C_ROOM);
-        k1 = dTdt(currT);
-        k2 = dTdt(currT + dt_hr/2 * k1);
-        k3 = dTdt(currT + dt_hr/2 * k2);
-        k4 = dTdt(currT + dt_hr * k3);
-        currT = currT + dt_hr/6 * (k1 + 2*k2 + 2*k3 + k4);
+        % Single source-of-truth RK4 step
+        currT = plant_step(currT, u_ctrl, u_ut, Tamb, dt_hr);
     end
 
     fprintf('  MATLAB T_room range: [%.2f, %.2f] °C\n', min(T_matlab), max(T_matlab));
@@ -316,27 +299,42 @@ function T_sim = run_simulink_plant(repoRoot, t_hr, util, t_amb, dt_hr)
         load_system(modelPath);
     end
     initModelBaseParameters(modelName);
+    configureModelSignals(modelName);
     set_param(modelName, 'StopTime', num2str(t_sec(end)));
 
     fprintf('  Running Simulink model...\n');
     simOut = sim(modelName, 'ReturnWorkspaceOutputs', 'on');
 
-    % Extract Server_Temp
-    logsout = simOut.get('logsout');
+    availVars = simOut.who;
+    logsout = [];
+    if ismember('logsout', availVars)
+        logsout = simOut.get('logsout');
+    elseif ismember('yout', availVars)
+        logsout = simOut.get('yout');
+    elseif isprop(simOut, 'logsout') && ~isempty(simOut.logsout)
+        logsout = simOut.logsout;
+    end
+
     if isempty(logsout)
         error('validate_plant_comparison:noLogsout', ...
-            'No logsout found in Simulink output. Check signal logging configuration.');
+            'No logsout found in Simulink output. Available outputs: %s', strjoin(availVars, ', '));
     end
 
-    sig = logsout.get('Server_Temp');
-    if isempty(sig)
+    elemNames = logsout.getElementNames();
+    if ismember('Server_Temp', elemNames)
+        sig = logsout.get('Server_Temp');
+        sigVal = getSigValues(sig);
+    elseif ismember('T', elemNames)
+        sig = logsout.get('T');
+        rawVal = getSigValues(sig);
+        sigVal = timeseries(rawVal.Data(:, 2), rawVal.Time);
+    else
         error('validate_plant_comparison:missingSignal', ...
-            'Signal "Server_Temp" not found in logsout. Available: %s', ...
-            strjoin(logsout.getElementNames(), ', '));
+            'Neither "Server_Temp" nor "T" found in logsout. Available: %s', ...
+            strjoin(elemNames, ', '));
     end
 
-    ts_sim = sig.Values;
-    T_sim = resample(ts_sim, t_sec).Data(:);
+    T_sim = resample(sigVal, t_sec).Data(:);
     fprintf('  Simulink T_room range: [%.2f, %.2f] °C\n', min(T_sim), max(T_sim));
 end
 
@@ -371,4 +369,83 @@ function initModelBaseParameters(pureModelName)
     assignin('base', 'fan_area', 15);
     assignin('base', 'tower_height', 3);
     assignin('base', 'tower_area', 15);
+end
+
+function configureModelSignals(pureModelName)
+    set_param(pureModelName, 'SignalLogging', 'on');
+    set_param(pureModelName, 'SignalLoggingName', 'logsout');
+    set_param(pureModelName, 'ReturnWorkspaceOutputs', 'on');
+    set_param(pureModelName, 'SaveTime', 'on');
+    set_param(pureModelName, 'TimeSaveName', 'tout');
+    set_param(pureModelName, 'SaveOutput', 'on');
+    set_param(pureModelName, 'OutputSaveName', 'yout');
+
+    sigNames = {'Q', 'T', 'pwr'};
+
+    % 1. Enable DataLogging on lines entering Scope "Results"
+    try
+        scopeH = get_param([pureModelName '/Results'], 'PortHandles');
+        if ~isempty(scopeH) && isfield(scopeH, 'Inport')
+            for p = 1:min(numel(scopeH.Inport), numel(sigNames))
+                lineH = get_param(scopeH.Inport(p), 'Line');
+                if lineH ~= -1
+                    set_param(lineH, 'Name', sigNames{p});
+                    set_param(lineH, 'DataLogging', 'on');
+                    set_param(lineH, 'DataLoggingNameMode', 'Custom');
+                    set_param(lineH, 'DataLoggingNameCustom', sigNames{p});
+                end
+            end
+        end
+    catch ME %#ok<NASGU>
+    end
+
+    % 2. Enable DataLogging on outport lines of subsystem "Measurements"
+    try
+        measH = get_param([pureModelName '/Measurements'], 'PortHandles');
+        if ~isempty(measH) && isfield(measH, 'Outport')
+            for p = 1:min(numel(measH.Outport), numel(sigNames))
+                lineH = get_param(measH.Outport(p), 'Line');
+                if lineH ~= -1
+                    set_param(lineH, 'Name', sigNames{p});
+                    set_param(lineH, 'DataLogging', 'on');
+                    set_param(lineH, 'DataLoggingNameMode', 'Custom');
+                    set_param(lineH, 'DataLoggingNameCustom', sigNames{p});
+                end
+            end
+        end
+    catch ME %#ok<NASGU>
+    end
+
+    % 3. Enable DataLogging on input lines to Outport blocks inside "Measurements"
+    try
+        for k = 1:numel(sigNames)
+            blkPath = [pureModelName '/Measurements/' sigNames{k}];
+            if getSimulinkBlockHandle(blkPath) ~= -1
+                pH = get_param(blkPath, 'PortHandles');
+                if ~isempty(pH.Inport)
+                    lineH = get_param(pH.Inport(1), 'Line');
+                    if lineH ~= -1
+                        set_param(lineH, 'Name', sigNames{k});
+                        set_param(lineH, 'DataLogging', 'on');
+                        set_param(lineH, 'DataLoggingNameMode', 'Custom');
+                        set_param(lineH, 'DataLoggingNameCustom', sigNames{k});
+                    end
+                end
+            end
+        end
+    catch ME %#ok<NASGU>
+    end
+end
+
+function vals = getSigValues(sig)
+    if isprop(sig, 'Values') && ~isempty(sig.Values)
+        vals = sig.Values;
+    elseif isa(sig, 'timeseries') || isa(sig, 'timetable')
+        vals = sig;
+    else
+        error('validate_plant_comparison:invalidSignalObject', 'Signal object of unexpected type: %s', class(sig));
+    end
+    if isa(vals, 'timetable')
+        vals = timetable2timeseries(vals);
+    end
 end

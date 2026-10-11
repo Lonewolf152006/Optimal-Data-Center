@@ -100,19 +100,22 @@ end
         Ts = zeros(p + 1, 1);
         Ts(1) = T_current;
         for k = 1:p
+            % Physical IT heat generation with fan ramp penalty
+            ramp = min(max((Ts(k) - FAN_RAMP_START) / (FAN_RAMP_FULL - FAN_RAMP_START), 0.0), 1.0);
+            qit = Q_IDLE + (Q_IT_MAX - Q_IDLE) * util(k) + FAN_PEN_MAX * (ramp^2);
+            q_del = u_seq(k) * Q_COOL_MAX;
+            q_env = UA_ENV * (tamb(k) - Ts(k));
+            dT_phys = (qit - q_del + q_env) / C_ROOM;
+
             if ~isempty(ml_traj) && length(ml_traj) >= k
-                % Dynamic actuation response:
-                % Net cooling extraction rate scaled by room thermal capacitance
-                pred_step = ml_traj(k) - Ts(k);
-                dT_cool = (u_seq(k) * Q_COOL_MAX * dt_hr) / C_ROOM;
-                dT_nominal = (0.45 * Q_COOL_MAX * dt_hr) / C_ROOM;
-                Ts(k + 1) = Ts(k) + pred_step - (dT_cool - dT_nominal);
+                % Actuation responds directly to heat extraction: Q_del = u(k) * Q_COOL_MAX
+                % The learned surrogate provides the ambient/workload disturbance residual
+                pred_step = ml_traj(k) - (Ts(1) * (k == 1) + ml_traj(max(1, k - 1)) * (k > 1));
+                surr_dist = pred_step - ((Q_IDLE + (Q_IT_MAX - Q_IDLE) * util(k) + q_env) / C_ROOM * dt_hr);
+                Ts(k + 1) = Ts(k) + dt_hr * dT_phys + 0.1 * surr_dist;
             else
-                % Lumped-parameter forward model
-                qit = Q_IDLE + (Q_IT_MAX - Q_IDLE) * util(k);
-                q_del = u_seq(k) * Q_COOL_MAX;
-                dT = (qit - q_del + UA_ENV * (tamb(k) - Ts(k))) / C_ROOM;
-                Ts(k + 1) = Ts(k) + dt_hr * dT;
+                % Lumped-parameter physical forward model
+                Ts(k + 1) = Ts(k) + dt_hr * dT_phys;
             end
         end
     end

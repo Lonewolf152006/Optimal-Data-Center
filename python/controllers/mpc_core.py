@@ -52,31 +52,29 @@ def make_mpc_controller(predictor_fn=None, horizon=24):
     plant = ThermalPlant()
     warm = {"u": np.full(horizon, 0.4)}
 
-    # Nominal baseline cooling control for predictor deviation
-    U_BASELINE = 0.45
-
     def predict_trajectory(t0, u_seq, util_fore, tamb_fore, ml_traj):
         h = len(u_seq)
         Ts = np.empty(h + 1)
         Ts[0] = t0
         for k in range(h):
+            # Physical heat generation & envelope exchange
+            qit = plant.Q_IDLE + (plant.Q_IT_MAX - plant.Q_IDLE) * util_fore[k]
+            ramp = np.clip((Ts[k] - plant.FAN_RAMP_START) / (plant.FAN_RAMP_FULL - plant.FAN_RAMP_START), 0.0, 1.0)
+            qit += plant.FAN_PEN_MAX * (ramp ** 2)
+            q_del = u_seq[k] * plant.Q_COOL_MAX
+            q_env = plant.UA_ENV * (tamb_fore[k] - Ts[k])
+            dT_phys = (qit - q_del + q_env) / plant.C_ROOM
+
             if ml_traj is not None:
-                # Dynamic thermal response to control actuation u_seq[k]
-                # Rather than a fixed (u - 0.45) linearization around a hard-coded nominal,
-                # we model the actuation response directly from the heat extraction rate:
-                # Q_cool(u) = u * Q_COOL_MAX, with COP(Tamb) efficiency.
+                # Direct actuation-dependent thermal response:
+                # The optimizer couples actuation directly through physical heat extraction Q_del = u * Q_COOL_MAX,
+                # while learned surrogate accounts for non-linear disturbance residual without hard-coded nominal offsets.
                 pred_step = ml_traj[k] - (t0 if k == 0 else ml_traj[k - 1])
-                # Net cooling temperature delta per step
-                dT_cool = (u_seq[k] * plant.Q_COOL_MAX * plant.DT_HR) / plant.C_ROOM
-                # Baseline nominal cooling offset accounted for in surrogate training trajectory
-                dT_nominal = (U_BASELINE * plant.Q_COOL_MAX * plant.DT_HR) / plant.C_ROOM
-                Ts[k + 1] = Ts[k] + pred_step - (dT_cool - dT_nominal)
+                surr_disturbance = pred_step - ((plant.Q_IDLE + (plant.Q_IT_MAX - plant.Q_IDLE) * util_fore[k] + q_env) / plant.C_ROOM * plant.DT_HR)
+                Ts[k + 1] = Ts[k] + plant.DT_HR * dT_phys + 0.1 * surr_disturbance
             else:
-                # Fallback to internal physics model
-                qit = plant.Q_IDLE + (plant.Q_IT_MAX - plant.Q_IDLE) * util_fore[k]
-                q_del = u_seq[k] * plant.Q_COOL_MAX
-                dT = (qit - q_del + plant.UA_ENV * (tamb_fore[k] - Ts[k])) / plant.C_ROOM
-                Ts[k + 1] = Ts[k] + plant.DT_HR * dT
+                # Pure physical forward model
+                Ts[k + 1] = Ts[k] + plant.DT_HR * dT_phys
         return Ts
 
     # ------------------------------------------------------------------

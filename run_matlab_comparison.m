@@ -65,8 +65,8 @@ T_ALW_HI = 32.0;     % ASHRAE Allowable upper (°C)
 
 % Generate scenario profiles
 fprintf('Generating deterministic scenario profiles...\n');
-envTS = generate_environment(nDays, dtMinutes, []);
-workloadTS = generate_workload(nDays, dtMinutes, 0.15, []);
+envTS = generate_environment(nDays, dtMinutes, [2 4], seed);
+workloadTS = generate_workload(nDays, dtMinutes, [2 4], [13 15], seed);
 
 tamb = envTS.Data(1:nSteps);
 util = workloadTS.Data(1:nSteps);
@@ -89,28 +89,19 @@ if exist('import_classical_surrogate', 'file')
 end
 
 % -------------------------------------------------------------------------
-% 1. RUN BASELINE THERMOSTAT (Relay with hysteresis)
+% 1. RUN BASELINE THERMOSTAT (Single source-of-truth Relay hysteresis)
 % -------------------------------------------------------------------------
 fprintf('Simulating Controller 1: Baseline Thermostat (Relay hysteresis)...\n');
 T_base = zeros(nSteps, 1);
 u_base = zeros(nSteps, 1);
 T_base(1) = T_SET;
-thermo_state = false; % Cooling state: false = low (0.25), true = high (1.0)
+
+% Initialize single-source baseline thermostat
+baseline_thermostat(T_SET, true);
 
 for k = 1:nSteps
     Tk = T_base(k);
-    % Stateflow/Relay logic: Switch ON >= 23°C, Switch OFF <= 21°C
-    if Tk >= 23.0
-        thermo_state = true;
-    elseif Tk <= 21.0
-        thermo_state = false;
-    end
-    
-    if thermo_state
-        u_base(k) = 1.0;
-    else
-        u_base(k) = 0.25;
-    end
+    u_base(k) = baseline_thermostat(Tk);
     
     if k < nSteps
         T_base(k+1) = rk4_step(Tk, u_base(k), util(k), tamb(k), dtHr, ...
